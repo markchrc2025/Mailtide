@@ -1,0 +1,19 @@
+# MailTide runs ON THE VPS with host networking so it can reach both:
+#   - Postal's MariaDB at 127.0.0.1:3306 (read-only user)
+#   - the operator's PostgreSQL at 127.0.0.1:5432
+# and so Caddy (also on the box) can reverse-proxy console.sentire.solutions
+# to 127.0.0.1:3000. The app binds loopback only (HOST=127.0.0.1), so nothing
+# is exposed publicly except through Caddy.
+services:
+  mailtide:
+    build: .
+    image: mailtide:latest
+    container_name: mailtide
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      HOST: 127.0.0.1
+      PORT: 3000
+      NODE_ENV: production

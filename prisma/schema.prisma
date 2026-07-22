@@ -1,0 +1,90 @@
+// MailTide's own database (PostgreSQL).
+// Holds ONLY auth + metadata. It never stores Postal API key values — those
+// are read live from Postal's MariaDB on demand (see src/lib/postal.ts).
+//
+// The schema is multi-tenant + RBAC ready from day one: every Postal resource
+// is conceptually scoped to an Organization. Today there is exactly one org
+// and one OWNER (seeded from env), but the tables and permission checks are
+// already shaped for selling this later without a rebuild.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model Organization {
+  id   String @id @default(cuid())
+  name String
+
+  // TODO(multi-tenant): map this org to a specific Postal organization
+  // (by permalink or id) once per-org Postal scoping lands. Today one org
+  // sees all Postal resources; this is where that mapping will live.
+  postalOrgPermalink String?
+
+  users           User[]
+  credentialNotes CredentialNote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String @id @default(cuid())
+  email        String @unique
+  passwordHash String
+  role         Role   @default(VIEWER)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  sessions Session[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model Session {
+  id String @id @default(cuid())
+
+  // The cookie holds the raw token; the DB stores only a hash of it, peppered
+  // with SESSION_SECRET. Rotating the secret invalidates every session.
+  tokenHash String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// The ONLY Postal-adjacent data MailTide persists: a free-text "app name /
+// note" per Postal credential, keyed by Postal's stable credential uuid.
+// Pure metadata — never a key value.
+model CredentialNote {
+  id                   String  @id @default(cuid())
+  postalCredentialUuid String
+  note                 String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, postalCredentialUuid])
+}
