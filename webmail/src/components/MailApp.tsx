@@ -18,7 +18,7 @@ import Composer, { type Draft } from "./Composer";
 type ListResp = { total: number; page: number; pageSize: number; messages: MessageRow[] };
 type Toast = { text: string; tone: "ok" | "error" } | null;
 
-export default function MailApp({ email }: { email: string }) {
+export default function MailApp({ email, build }: { email: string; build: string }) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folder, setFolder] = useState("INBOX");
   const [rows, setRows] = useState<MessageRow[]>([]);
@@ -285,6 +285,7 @@ export default function MailApp({ email }: { email: string }) {
             <Logout size={16} />
           </button>
         </div>
+        <span className="px-1 text-[10.5px] text-espresso-label">MailTide {build}</span>
       </nav>
 
       {/* Message list */}

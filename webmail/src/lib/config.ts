@@ -15,3 +15,6 @@ export function sessionSecret(): string {
   }
   return s;
 }
+
+/** The build shown in the app and in /api/health (raise it with each release). */
+export const BUILD = "0.1.1";

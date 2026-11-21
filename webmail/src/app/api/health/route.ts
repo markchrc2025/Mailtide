@@ -1,5 +1,5 @@
 import tls from "node:tls";
-import { config } from "@/lib/config";
+import { BUILD, config } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -19,5 +19,5 @@ function probe(host: string, port: number): Promise<boolean> {
 
 export async function GET() {
   const imap = await probe(config.imapHost, config.imapPort);
-  return Response.json({ ok: true, imap }, { status: imap ? 200 : 503, headers: { "Cache-Control": "no-store" } });
+  return Response.json({ ok: true, build: BUILD, imap }, { status: imap ? 200 : 503, headers: { "Cache-Control": "no-store" } });
 }
