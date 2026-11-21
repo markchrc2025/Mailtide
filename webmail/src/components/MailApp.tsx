@@ -200,7 +200,9 @@ export default function MailApp({ email, build }: { email: string; build: string
       if (ev.key === "/") {
         ev.preventDefault();
         searchRef.current?.focus();
-      } else if (ev.key === "c") {
+      } else if (ev.key === "c" && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+        // Stop the "c" from landing in the To field that opens with focus.
+        ev.preventDefault();
         setDraft({});
       } else if (ev.key === "e" && selected) {
         act("archive", [selected]);
