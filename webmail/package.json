@@ -1,0 +1,36 @@
+{
+  "name": "mailtide-webmail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MailTide by Sentire: the web mail app over mailcow (IMAP/SMTP).",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts"
+  },
+  "dependencies": {
+    "imapflow": "1.7.8",
+    "iron-session": "8.0.4",
+    "mailparser": "3.15.0",
+    "next": "15.5.29",
+    "nodemailer": "6.10.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "sanitize-html": "2.18.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/mailparser": "3.4.6",
+    "@types/node": "22.15.30",
+    "@types/nodemailer": "6.4.24",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "@types/sanitize-html": "2.16.0",
+    "autoprefixer": "10.4.21",
+    "postcss": "8.5.6",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.8.3"
+  }
+}
