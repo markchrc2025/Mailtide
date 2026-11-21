@@ -129,7 +129,7 @@ export default function Reader({ message: m, loading, role, folders, onBack, onA
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-white px-3 py-3 md:px-6">
+      <div className="scroll-thin flex items-center gap-1.5 overflow-x-auto border-b border-line bg-white px-3 py-3 md:flex-wrap md:px-6">
         <button onClick={onBack} aria-label="Back to list" className="rounded-lg p-2 text-ink hover:bg-bg md:hidden">
           <Back />
         </button>

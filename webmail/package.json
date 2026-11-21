@@ -1,6 +1,6 @@
 {
   "name": "mailtide-webmail",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "MailTide by Sentire: the web mail app over mailcow (IMAP/SMTP).",
   "scripts": {

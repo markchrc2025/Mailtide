@@ -136,7 +136,7 @@ export default function Composer({ initial, onClose, onDone }: { initial: Draft;
         }}
       >
         <div className="espresso flex items-center gap-2 px-4 py-3 text-white">
-          <b className="font-head flex-1 text-[14px] font-semibold">{initial.inReplyTo ? "Reply" : initial.draftUid ? "Draft" : subject.startsWith("Fwd") ? "Forward" : "New email"}</b>
+          <b className="font-head flex-1 text-[14px] font-semibold">{initial.replyToUid ? "Reply" : initial.draftUid ? "Draft" : subject.startsWith("Fwd") ? "Forward" : "New email"}</b>
           <button onClick={close} aria-label="Close" className="rounded-md p-1 text-espresso-dim hover:bg-white/10 hover:text-white">
             <Close size={17} />
           </button>
@@ -174,7 +174,7 @@ export default function Composer({ initial, onClose, onDone }: { initial: Draft;
           ref={body}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          className="scroll-thin min-h-0 flex-1 resize-none px-4 py-3 text-sm leading-relaxed text-ink outline-none"
+          className="scroll-thin min-h-0 flex-1 resize-none px-4 py-3 text-sm leading-relaxed text-ink outline-none focus-visible:outline-none"
           placeholder="Write your message"
         />
         {files.length > 0 && (

@@ -80,8 +80,12 @@ export async function withImap<T>(creds: Creds, fn: (c: ImapFlow) => Promise<T>)
 /** Runs fn with the folder opened (and locked) on a pooled client. */
 export async function withFolder<T>(creds: Creds, folder: string, fn: (c: ImapFlow) => Promise<T>): Promise<T> {
   return withImap(creds, async (c) => {
+    const wasOpen = typeof c.mailbox === "object" && c.mailbox.path === folder;
     const lock = await c.getMailboxLock(folder);
     try {
+      // A reused connection may still hold an old view of the folder;
+      // NOOP makes the server report mail that arrived since.
+      if (wasOpen) await c.noop();
       return await fn(c);
     } finally {
       lock.release();
