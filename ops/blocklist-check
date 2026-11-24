@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""blocklist-check: daily check of the sending IP against major blocklists
+(Postal and MailTide P2.7, FR-29).
+
+  blocklist-check                 check 169.58.24.215, alert on a listing
+  blocklist-check --ip 127.0.0.2  test with the standard listed test address
+  blocklist-check --no-alert      print only
+
+Alerts go through Postal's API (credential api-test) to the same address as
+zone-watch. An answer of 127.255.255.x means the list refused the query (for
+example Spamhaus through a public resolver); it is reported as UNKNOWN, not as
+a listing. SORBS closed in 2024 and is not checked.
+"""
+import argparse, datetime, json, socket, subprocess, sys, urllib.request
+import yaml
+
+LISTS = {
+    "Spamhaus ZEN": "zen.spamhaus.org",
+    "Barracuda": "b.barracudacentral.org",
+    "SpamCop": "bl.spamcop.net",
+    "UCEPROTECT level 1": "dnsbl-1.uceprotect.net",
+    "PSBL": "psbl.surriel.com",
+}
+MAJOR = {"Spamhaus ZEN", "Barracuda"}
+ALERT_TO = "mcrc.business.solutions@gmail.com"
+ALERT_FROM = "Postal monitor <alerts@mail.sentire.solutions>"
+LOG = "/var/log/blocklist-check.log"
+
+
+def lookup(ip, zone):
+    q = ".".join(reversed(ip.split("."))) + "." + zone
+    try:
+        addrs = sorted({a[4][0] for a in socket.getaddrinfo(q, None, socket.AF_INET)})
+    except socket.gaierror:
+        return "clean", []
+    if all(a.startswith("127.255.255.") for a in addrs):
+        return "unknown", addrs
+    return "listed", addrs
+
+
+def postal_key():
+    pw = yaml.safe_load(open("/opt/postal/config/postal.yml"))["main_db"]["password"]
+    r = subprocess.run(["docker", "exec", "-e", f"MYSQL_PWD={pw}", "postal-mariadb", "mariadb", "-uroot", "-N",
+                        "-B", "postal", "-e", "select `key` from credentials where name='api-test' and type='API'"],
+                       capture_output=True, text=True, check=True)
+    return r.stdout.strip()
+
+
+def alert(subject, body):
+    req = urllib.request.Request("http://127.0.0.1:5000/api/v1/send/message",
+                                 data=json.dumps({"to": [ALERT_TO], "from": ALERT_FROM, "subject": subject,
+                                                  "plain_body": body, "tag": "monitor"}).encode(),
+                                 headers={"X-Server-API-Key": postal_key(), "Content-Type": "application/json",
+                                          "Host": "postal.sentire.solutions"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r).get("status")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ip", default="169.58.24.215")
+    ap.add_argument("--no-alert", action="store_true")
+    a = ap.parse_args()
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    rows, listed = [], []
+    for name, zone in LISTS.items():
+        state, addrs = lookup(a.ip, zone)
+        rows.append(f"{name:20} {state.upper():8} {' '.join(addrs)}")
+        if state == "listed":
+            listed.append(name)
+    report = "\n".join(rows)
+    print(report)
+    with open(LOG, "a") as f:
+        f.write(f"{now} {a.ip} listed={','.join(listed) or 'none'}\n")
+    if listed and not a.no_alert:
+        major = [n for n in listed if n in MAJOR]
+        advice = ("A major list is involved. Switch to SMTP2GO now:\n"
+                  "  postal-delivery smtp2go --reason \"blocklist: " + ", ".join(major) + "\"\n"
+                  "then find the cause in Postal and mailcow logs and request delisting.") if major else \
+                 "Minor list only. Watch Gmail and Outlook delivery for 24 h, find the cause, request delisting."
+        st = alert(f"[Postal] {a.ip} is on a blocklist: {', '.join(listed)}",
+                   f"Checked {now}.\n\n{report}\n\n{advice}\n")
+        print(f"alert sent: {st}")
+    return 1 if listed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""postal-delivery: Postal's delivery switch (Postal and MailTide P2, FR-11 to FR-16).
+
+  postal-delivery status
+  postal-delivery direct  --reason "why"
+  postal-delivery smtp2go --reason "why"
+
+Direct:  Postal delivers itself from 169.58.24.215 (IPv4 pool "main-ipv4",
+         HELO postal.sentire.solutions). Builds Sentire's own reputation.
+SMTP2GO: Postal hands every message to the local smarthost (127.0.0.1:2525),
+         which relays to SMTP2GO with authentication. Fallback.
+
+Only outgoing mail changes. Inbound port 25 always stays with mailcow.
+Steps: back up postal.yml, (SMTP2GO: check smarthost), edit smtp_relays,
+restart postal-worker-1 only, send a canary through the Postal API to
+canary@mailtide.sentire.solutions, wait up to 120 s for status Sent. On failure
+the backup is restored and the worker restarted. Every change is logged to
+/var/log/postal-delivery.log with who, when, from, to and reason.
+"""
+import argparse, datetime, json, os, shutil, smtplib, socket, subprocess, sys, time, urllib.request
+import yaml
+
+CONF = "/opt/postal/config/postal.yml"
+LOG = "/var/log/postal-delivery.log"
+RELAY = "smtp://postal-smarthost:2525?ssl_mode=None"
+WORKER = "postal-worker-1"
+CANARY_TO = "canary@mailtide.sentire.solutions"
+CANARY_FROM = "canary@mail.sentire.solutions"
+API = "http://127.0.0.1:5000/api/v1"
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def load():
+    with open(CONF) as f:
+        return yaml.safe_load(f)
+
+
+def current_mode(cfg):
+    return "smtp2go" if (cfg.get("postal") or {}).get("smtp_relays") else "direct"
+
+
+def set_mode_in_file(mode):
+    """Edit postal.yml as text so comments and layout stay intact."""
+    lines = open(CONF).read().splitlines(keepends=True)
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("  smtp_relays:"):
+            i += 1
+            while i < len(lines) and lines[i].startswith("    - "):
+                i += 1
+            continue
+        out.append(line)
+        if line.rstrip() == "postal:" and mode == "smtp2go":
+            out.append("  smtp_relays:\n")
+            out.append(f"    - {RELAY}\n")
+        i += 1
+    tmp = CONF + ".tmp"
+    with open(tmp, "w") as f:
+        f.writelines(out)
+    st = os.stat(CONF)
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.chmod(tmp, st.st_mode)
+    os.replace(tmp, CONF)
+    if current_mode(load()) != mode:
+        raise RuntimeError("postal.yml edit did not take effect")
+
+
+def db_query(sql):
+    pw = load()["main_db"]["password"]
+    r = subprocess.run(["docker", "exec", "-e", f"MYSQL_PWD={pw}", "postal-mariadb", "mariadb", "-uroot",
+                        "-N", "-B", "postal", "-e", sql], capture_output=True, text=True, check=True)
+    return r.stdout.strip()
+
+
+def api_key():
+    return db_query("select c.`key` from credentials c where c.name='api-test' and c.type='API' limit 1")
+
+
+def api(path, body):
+    req = urllib.request.Request(f"{API}/{path}", data=json.dumps(body).encode(),
+                                 headers={"X-Server-API-Key": api_key(), "Content-Type": "application/json",
+                                          "Host": "postal.sentire.solutions"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)
+
+
+def smarthost_ok():
+    try:
+        s = smtplib.SMTP("127.0.0.1", 2525, timeout=10)
+        code, _ = s.ehlo("postal-delivery-check")
+        s.quit()
+        return code == 250
+    except (OSError, smtplib.SMTPException):
+        return False
+
+
+def restart_worker():
+    subprocess.run(["docker", "restart", WORKER], check=True, capture_output=True)
+    time.sleep(8)
+
+
+def canary(mode, extra_to=None):
+    to = [CANARY_TO] + ([extra_to] if extra_to else [])
+    res = api("send/message", {"to": to, "from": f"Postal canary <{CANARY_FROM}>",
+                               "subject": f"Postal delivery canary: {mode} {now()}",
+                               "plain_body": f"Canary after switching Postal delivery to {mode}.",
+                               "tag": "canary"})
+    if res.get("status") != "success":
+        return False, f"API refused: {res}"
+    ids = {r: v["id"] for r, v in res["data"]["messages"].items()}
+    deadline = time.time() + 120
+    last = {}
+    while time.time() < deadline:
+        done = True
+        for rcpt, mid in ids.items():
+            st = api("messages/message", {"id": mid, "_expansions": ["status"]})
+            s = st["data"]["status"]["status"]
+            last[rcpt] = s
+            if s in ("HardFail", "Bounced", "Held"):
+                return False, f"{rcpt}: {s}"
+            if s != "Sent":
+                done = False
+        if done:
+            return True, json.dumps(last)
+        time.sleep(5)
+    return False, f"timeout: {json.dumps(last)}"
+
+
+def log(line):
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mode", choices=["status", "direct", "smtp2go"])
+    ap.add_argument("--reason", default="")
+    ap.add_argument("--seed", help="also send the canary to this address (for header checks)")
+    a = ap.parse_args()
+    cfg = load()
+    cur = current_mode(cfg)
+    if a.mode == "status":
+        print(f"delivery mode: {cur}")
+        print(f"ip pools: {'on' if (cfg.get('postal') or {}).get('use_ip_pools') else 'off'}")
+        print(f"smarthost: {'ok' if smarthost_ok() else 'DOWN'}")
+        if os.path.exists(LOG):
+            print("last changes:")
+            print("".join(open(LOG).readlines()[-3:]).rstrip())
+        return 0
+    if not a.reason:
+        print("--reason is required"); return 2
+    who = os.environ.get("SUDO_USER") or os.environ.get("USER") or "root"
+    if a.mode == cur:
+        print(f"already {cur}; no change")
+        if a.seed:
+            ok, detail = canary(cur, a.seed); print(("canary ok " if ok else "canary FAILED ") + detail)
+        return 0
+    if a.mode == "smtp2go" and not smarthost_ok():
+        log(f"{now()} | {who} | ABORT {cur} -> {a.mode} | smarthost down | {a.reason}")
+        print("smarthost is not answering on 127.0.0.1:2525; staying on", cur); return 1
+    bak = f"{CONF}.bak-delivery-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    shutil.copy2(CONF, bak)
+    set_mode_in_file(a.mode)
+    restart_worker()
+    ok, detail = canary(a.mode, a.seed)
+    if not ok:
+        shutil.copy2(bak, CONF)
+        restart_worker()
+        log(f"{now()} | {who} | ROLLBACK {cur} -> {a.mode} failed canary ({detail}) | {a.reason}")
+        print(f"canary failed ({detail}); restored {cur}"); return 1
+    log(f"{now()} | {who} | {cur} -> {a.mode} | canary ok | {a.reason}")
+    print(f"delivery mode is now {a.mode} (was {cur}); canary {detail}; backup {bak}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
