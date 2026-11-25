@@ -8,6 +8,7 @@ import {
   formatAddress,
   initials,
   longDate,
+  shortDate,
   prefixSubject,
   quoteText,
   type Folder,
@@ -16,9 +17,11 @@ import {
 import { Archive, Back, Clip, Forward, Mail, Reply, ReplyAll, Spam, Star, Trash } from "./Icons";
 import { LogoMark } from "./Logo";
 import type { Draft } from "./Composer";
+import { hasQuote } from "@/lib/thread";
 
 type Props = {
   message: FullMessage | null;
+  thread: FullMessage[];
   loading: boolean;
   role: string;
   folders: Folder[];
@@ -55,9 +58,7 @@ export function forwardDraft(m: FullMessage): Draft {
   return { subject: prefixSubject("Fwd", m.subject), text: `\n\n${head}\n\n${m.text}`, forwardAttachments: m.attachments };
 }
 
-export default function Reader({ message: m, loading, role, folders, onBack, onAction, onCompose, onSent, onError }: Props) {
-  const frame = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(200);
+export default function Reader({ message: m, thread, loading, role, folders, onBack, onAction, onCompose, onSent, onError }: Props) {
   const [quick, setQuick] = useState("");
   const [sending, setSending] = useState(false);
   const [me, setMe] = useState("");
@@ -68,7 +69,6 @@ export default function Reader({ message: m, loading, role, folders, onBack, onA
 
   useEffect(() => {
     setQuick("");
-    setHeight(200);
   }, [m?.uid]);
 
   if (loading && !m) {
@@ -90,14 +90,17 @@ export default function Reader({ message: m, loading, role, folders, onBack, onA
     );
   }
 
-  const sender = m.from[0];
-  const [bg, fg] = avatarColors(sender?.address || "?");
   const moveTargets = folders.filter((f) => f.path !== m.folder);
+  const msgs = thread.length ? thread : [m];
+  const mine = (x: FullMessage) => !!me && x.from.some((a) => a.address.toLowerCase() === me.toLowerCase());
+  // Quick reply answers the newest message someone else sent, like Outlook.
+  const replyBase = msgs.find((x) => !mine(x)) || msgs[0];
+  const replySender = replyBase.from[0];
 
   async function sendQuick() {
-    if (!m || !quick.trim()) return;
+    if (!quick.trim()) return;
     setSending(true);
-    const d = replyDraft(m, me, false);
+    const d = replyDraft(replyBase, me, false);
     try {
       await api("/api/send", {
         method: "POST",
@@ -121,12 +124,6 @@ export default function Reader({ message: m, loading, role, folders, onBack, onA
   }
 
   const btn = "flex h-9 items-center gap-1.5 rounded-[9px] border border-line bg-white px-3 text-[13px] font-medium text-ink hover:bg-bg";
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
-    body{margin:0;font-family:'Hanken Grotesk',Arial,sans-serif;font-size:14px;line-height:1.6;color:#2A2420;word-wrap:break-word;overflow-wrap:anywhere}
-    img{max-width:100%;height:auto} a{color:#B04A22} blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:3px solid #ECE6DD;color:#6B6259}
-    pre{white-space:pre-wrap} table{max-width:100%}
-  </style></head><body>${m.html}</body></html>`;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="scroll-thin flex items-center gap-1.5 overflow-x-auto border-b border-line bg-white px-3 py-3 md:flex-wrap md:px-6">
@@ -175,65 +172,19 @@ export default function Reader({ message: m, loading, role, folders, onBack, onA
         <div className="mx-auto flex w-full max-w-[880px] flex-col gap-4 px-4 py-6 md:px-7">
           <h1 className="font-head m-0 text-[20px] font-semibold leading-snug tracking-tight md:text-[22px]">{m.subject}</h1>
 
-          <article className="flex flex-col gap-3 rounded-[14px] border border-line bg-white px-4 py-4 md:px-5">
-            <div className="flex items-center gap-[11px]">
-              <div className="flex h-[38px] w-[38px] flex-none items-center justify-center rounded-full font-head text-[13px] font-semibold" style={{ background: bg, color: fg }}>
-                {initials(sender)}
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col leading-snug">
-                <b className="truncate text-sm font-semibold">{displayName(sender)}</b>
-                <span className="truncate text-[12.5px] text-muted" title={[...m.to, ...m.cc].map(formatAddress).join(", ")}>
-                  {sender?.address} · to {m.to.map((a) => (a.address.toLowerCase() === me.toLowerCase() ? "me" : displayName(a))).join(", ") || "undisclosed"}
-                  {m.cc.length > 0 && `, cc ${m.cc.map(displayName).join(", ")}`}
-                </span>
-              </div>
-              <span className="flex-none text-xs text-muted">{longDate(m.date)}</span>
-            </div>
-            <iframe
-              ref={frame}
-              title="Email content"
-              sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-              srcDoc={srcDoc}
-              className="w-full border-0"
-              style={{ height }}
-              onLoad={() => {
-                const doc = frame.current?.contentDocument;
-                if (doc) setHeight(Math.min(20000, doc.documentElement.scrollHeight + 8));
-              }}
+          {msgs.length > 1 && (
+            <span className="-mt-2 text-[12.5px] text-muted">{msgs.length} messages in this conversation, newest first</span>
+          )}
+          {msgs.map((x, i) => (
+            <MessageCard
+              key={`${x.folder}:${x.uid}`}
+              m={x}
+              me={me}
+              openFolder={m.folder}
+              defaultOpen={i === 0 || (x.uid === m.uid && x.folder === m.folder) || !!x.unread}
+              onCompose={onCompose}
             />
-            {m.attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2 pt-1">
-                {m.attachments.map((a) => (
-                  <a
-                    key={a.index}
-                    href={`${a.url}&download=1`}
-                    className="flex items-center gap-2.5 rounded-[10px] border border-line bg-paper px-3 py-2 text-ink no-underline hover:border-orange-line"
-                  >
-                    <span className="flex h-9 w-[30px] items-center justify-center rounded-[5px] bg-[#F3D9CC] text-[10px] font-bold uppercase text-orange-text">
-                      {(a.filename.split(".").pop() || "file").slice(0, 4)}
-                    </span>
-                    <span className="flex flex-col leading-tight">
-                      <b className="max-w-[220px] truncate text-[12.5px] font-semibold">{a.filename}</b>
-                      <span className="text-[11.5px] text-muted">{fileSize(a.size)}</span>
-                    </span>
-                  </a>
-                ))}
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2 border-t border-line-faint pt-3">
-              <button className={btn} onClick={() => onCompose(replyDraft(m, me, false))}>
-                <Reply size={15} /> Reply
-              </button>
-              {m.to.length + m.cc.length > 1 && (
-                <button className={btn} onClick={() => onCompose(replyDraft(m, me, true))}>
-                  <ReplyAll size={15} /> Reply all
-                </button>
-              )}
-              <button className={btn} onClick={() => onCompose(forwardDraft(m))}>
-                <Forward size={15} /> Forward
-              </button>
-            </div>
-          </article>
+          ))}
 
           {role !== "sent" && role !== "drafts" && (
             <div className="flex flex-wrap items-center gap-2.5 rounded-[14px] border border-line bg-white px-3.5 py-3">
@@ -243,11 +194,11 @@ export default function Reader({ message: m, loading, role, folders, onBack, onA
                 value={quick}
                 onChange={(e) => setQuick(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && sendQuick()}
-                placeholder={`Reply to ${displayName(sender)}`}
+                placeholder={`Reply to ${displayName(replySender)}`}
                 className="h-10 min-w-[200px] flex-1 bg-transparent text-sm text-ink outline-none"
               />
               <button
-                onClick={() => onCompose({ ...replyDraft(m, me, false), text: quick + quoteText(m) })}
+                onClick={() => onCompose({ ...replyDraft(replyBase, me, false), text: quick + quoteText(replyBase) })}
                 className="flex h-[38px] items-center gap-1.5 rounded-[9px] border border-line px-3 text-[13px] font-medium text-ink hover:bg-bg"
               >
                 <Clip size={14} /> Full editor
@@ -264,5 +215,134 @@ export default function Reader({ message: m, loading, role, folders, onBack, onA
         </div>
       </div>
     </div>
+  );
+}
+
+const QUOTE_CSS = `.mt-quote,.gmail_quote,blockquote,#divRplyFwdMsg,#divRplyFwdMsg~*,#appendonsend~*,hr#stopSpelling~*{display:none}`;
+
+function MessageCard({
+  m,
+  me,
+  openFolder,
+  defaultOpen,
+  onCompose,
+}: {
+  m: FullMessage;
+  me: string;
+  openFolder: string;
+  defaultOpen: boolean;
+  onCompose: (d: Draft) => void;
+}) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [open, setOpen] = useState(defaultOpen);
+  const [showQuote, setShowQuote] = useState(false);
+  const [height, setHeight] = useState(120);
+  const sender = m.from[0];
+  const [bg, fg] = avatarColors(sender?.address || "?");
+  const btn = "flex h-9 items-center gap-1.5 rounded-[9px] border border-line bg-white px-3 text-[13px] font-medium text-ink hover:bg-bg";
+  const quoted = hasQuote(m.html);
+  const toLine = m.to.map((a) => (me && a.address.toLowerCase() === me.toLowerCase() ? "me" : displayName(a))).join(", ") || "undisclosed";
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
+    body{margin:0;font-family:'Hanken Grotesk',Arial,sans-serif;font-size:14px;line-height:1.6;color:#2A2420;word-wrap:break-word;overflow-wrap:anywhere}
+    img{max-width:100%;height:auto} a{color:#B04A22} blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:3px solid #ECE6DD;color:#6B6259}
+    pre{white-space:pre-wrap} table{max-width:100%} p{margin:0 0 .7em}
+    ${showQuote ? "" : QUOTE_CSS}
+  </style></head><body>${m.html}</body></html>`;
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center gap-[11px] rounded-[14px] border border-line bg-white px-4 py-3 text-left hover:border-orange-line md:px-5"
+        aria-label={`Open message from ${displayName(sender)}`}
+      >
+        <div className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full font-head text-[12px] font-semibold" style={{ background: bg, color: fg }}>
+          {initials(sender)}
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col leading-snug">
+          <span className="flex items-center gap-2">
+            <b className={`truncate text-sm ${m.unread ? "font-bold" : "font-semibold"}`}>{displayName(sender)}</b>
+            {m.folder !== openFolder && <span className="rounded-md bg-sand px-1.5 text-[11px] text-muted">{m.folder === "INBOX" ? "Inbox" : m.folder}</span>}
+          </span>
+          <span className="truncate text-[12.5px] text-muted">{(m.text || "").replace(/\s+/g, " ").replace(/On .{5,120} wrote:.*$/, "").trim().slice(0, 140) || "(no text)"}</span>
+        </div>
+        <span className="flex-none text-xs text-muted">{shortDate(m.date)}</span>
+      </button>
+    );
+  }
+
+  return (
+    <article className="flex flex-col gap-3 rounded-[14px] border border-line bg-white px-4 py-4 md:px-5">
+      <div className="flex items-center gap-[11px]">
+        <button onClick={() => setOpen(false)} aria-label="Collapse message" className="flex h-[38px] w-[38px] flex-none items-center justify-center rounded-full font-head text-[13px] font-semibold" style={{ background: bg, color: fg }}>
+          {initials(sender)}
+        </button>
+        <div className="flex min-w-0 flex-1 flex-col leading-snug">
+          <span className="flex items-center gap-2">
+            <b className="truncate text-sm font-semibold">{displayName(sender)}</b>
+            {m.folder !== openFolder && <span className="rounded-md bg-sand px-1.5 text-[11px] text-muted">{m.folder === "INBOX" ? "Inbox" : m.folder}</span>}
+          </span>
+          <span className="truncate text-[12.5px] text-muted" title={[...m.to, ...m.cc].map(formatAddress).join(", ")}>
+            {sender?.address} · to {toLine}
+            {m.cc.length > 0 && `, cc ${m.cc.map(displayName).join(", ")}`}
+          </span>
+        </div>
+        <span className="flex-none text-xs text-muted">{longDate(m.date)}</span>
+      </div>
+      <iframe
+        ref={frame}
+        title={`Email from ${displayName(sender)}`}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        srcDoc={srcDoc}
+        className="w-full border-0"
+        style={{ height }}
+        onLoad={() => {
+          const doc = frame.current?.contentDocument;
+          if (doc) setHeight(Math.max(24, Math.min(20000, doc.documentElement.scrollHeight + 4)));
+        }}
+      />
+      {quoted && (
+        <button
+          onClick={() => setShowQuote((v) => !v)}
+          className="-mt-1 w-fit rounded-md bg-sand px-2 text-[13px] font-bold leading-5 tracking-widest text-muted hover:bg-line"
+          aria-label={showQuote ? "Hide earlier messages" : "Show earlier messages"}
+          title={showQuote ? "Hide earlier messages" : "Show earlier messages"}
+        >
+          •••
+        </button>
+      )}
+      {m.attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {m.attachments.map((a) => (
+            <a
+              key={a.index}
+              href={`${a.url}&download=1`}
+              className="flex items-center gap-2.5 rounded-[10px] border border-line bg-paper px-3 py-2 text-ink no-underline hover:border-orange-line"
+            >
+              <span className="flex h-9 w-[30px] items-center justify-center rounded-[5px] bg-[#F3D9CC] text-[10px] font-bold uppercase text-orange-text">
+                {(a.filename.split(".").pop() || "file").slice(0, 4)}
+              </span>
+              <span className="flex flex-col leading-tight">
+                <b className="max-w-[220px] truncate text-[12.5px] font-semibold">{a.filename}</b>
+                <span className="text-[11.5px] text-muted">{fileSize(a.size)}</span>
+              </span>
+            </a>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2 border-t border-line-faint pt-3">
+        <button className={btn} onClick={() => onCompose(replyDraft(m, me, false))}>
+          <Reply size={15} /> Reply
+        </button>
+        {m.to.length + m.cc.length > 1 && (
+          <button className={btn} onClick={() => onCompose(replyDraft(m, me, true))}>
+            <ReplyAll size={15} /> Reply all
+          </button>
+        )}
+        <button className={btn} onClick={() => onCompose(forwardDraft(m))}>
+          <Forward size={15} /> Forward
+        </button>
+      </div>
+    </article>
   );
 }

@@ -7,7 +7,7 @@ import {
   initials,
   shortDate,
   type Folder,
-  type FullMessage,
+  type FullMessage, Thread,
   type MessageRow,
 } from "@/lib/client";
 import { Brand } from "./Logo";
@@ -32,6 +32,7 @@ export default function MailApp({ email, build }: { email: string; build: string
   const [listError, setListError] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [message, setMessage] = useState<FullMessage | null>(null);
+  const [thread, setThread] = useState<FullMessage[]>([]);
   const [messageLoading, setMessageLoading] = useState(false);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -112,7 +113,9 @@ export default function MailApp({ email, build }: { email: string; build: string
       setSelected(uid);
       setMessageLoading(true);
       try {
-        const m = await api<FullMessage>(`/api/messages/${uid}?folder=${encodeURIComponent(folder)}`);
+        const t = await api<Thread>(`/api/thread/${uid}?folder=${encodeURIComponent(folder)}`);
+        const m = t.messages.find((x) => x.uid === t.opened.uid && x.folder === t.opened.folder) || t.messages[0];
+        setThread(t.messages);
         setMessage(m);
         setRows((rs) => rs.map((r) => (r.uid === uid ? { ...r, seen: true } : r)));
         setFolders((fs) =>
@@ -468,6 +471,7 @@ export default function MailApp({ email, build }: { email: string; build: string
       <main className={`min-w-0 flex-1 flex-col bg-bg ${selected ? "flex" : "hidden md:flex"}`}>
         <Reader
           message={message}
+          thread={thread}
           loading={messageLoading}
           role={role}
           folders={folders}

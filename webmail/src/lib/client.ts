@@ -24,12 +24,16 @@ export type FullMessage = {
   replyTo: Address[];
   date: string;
   messageId: string | null;
+  inReplyTo?: string | null;
   references: string[];
   flagged: boolean;
+  unread?: boolean;
   html: string;
   text: string;
   attachments: Attachment[];
 };
+
+export type Thread = { subject: string; opened: { uid: number; folder: string }; messages: FullMessage[] };
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {

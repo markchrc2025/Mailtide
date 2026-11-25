@@ -43,3 +43,10 @@ test("snippetOf squashes whitespace and cuts length", () => {
   assert.equal(snippetOf("a\n\n  b\tc"), "a b c");
   assert.equal(snippetOf("x".repeat(300)).length, 140);
 });
+
+test("textToHtml turns quoted history into a foldable blockquote", () => {
+  const out = textToHtml("Thanks!\n\nOn Wed, 25 Nov 2026, Mark <m@x.ph> wrote:\n> hello\n> > older");
+  assert.ok(out.startsWith("<p>Thanks!</p>"));
+  assert.ok(out.includes('<div class="mt-quote"><p>On Wed, 25 Nov 2026, Mark &lt;m@x.ph&gt; wrote:</p><blockquote>'));
+  assert.ok(out.includes("<blockquote><p>older</p></blockquote>"));
+});
