@@ -95,3 +95,7 @@ Postal 3.3.7 sends no bounce notice for outgoing mail (spike S-2). `mailtide-ndr
 ### SMTP2GO mode and MailTide
 
 SMTP2GO only accepts sender domains verified in the SMTP2GO account. `mail.sentire.solutions` is verified there; `mailtide.sentire.solutions` is not, so in SMTP2GO mode MailTide mail from it is refused. The smarthost (image postal-smarthost:6) now sends bounce reports for `psrp.*` and `rp.postal.sentire.solutions` back to our own MX instead of through SMTP2GO, so a refusal reaches Postal (status Bounced) and the sender gets a notice instead of losing the mail silently. Before relying on SMTP2GO mode for MailTide, verify each MailTide domain in SMTP2GO.
+
+### Received header on user mail
+
+mailcow's `data/conf/postfix/anonymize_headers.pcre` hides each user's own IP address on outgoing mail (privacy, kept on purpose). Its label was changed from "by localhost (Mailerdaemon)" to "by mx.sentire.solutions (MailTide)" on 25 Nov 2026 (backup beside the file). A mailcow update can put the stock text back: after every mailcow update, run `grep MailTide /opt/mailcow-dockerized/data/conf/postfix/anonymize_headers.pcre` and re-apply if empty.
