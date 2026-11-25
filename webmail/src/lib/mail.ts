@@ -43,6 +43,15 @@ export const ROLE_LABEL: Record<Role, string> = {
   other: "",
 };
 
+const QUOTE_CLASSES = ["mt-quote", "gmail_quote", "gmail_quote_container", "gmail_attr", "moz-cite-prefix", "yahoo_quoted"];
+const QUOTE_IDS = new Set(["divRplyFwdMsg", "appendonsend", "stopSpelling"]);
+
+/** Keeps an element's id only when it is one of Outlook's reply markers. */
+function keepQuoteId(tagName: string, attribs: Record<string, string>) {
+  const { id, ...rest } = attribs;
+  return { tagName, attribs: id && QUOTE_IDS.has(id) ? { ...rest, id } : rest };
+}
+
 /** Cleans an email's HTML so it is safe to show inside the app. */
 export function cleanHtml(html: string): string {
   return sanitizeHtml(html, {
@@ -57,10 +66,16 @@ export function cleanHtml(html: string): string {
       th: ["colspan", "rowspan", "style", "align", "valign", "width", "bgcolor"],
       table: ["border", "cellpadding", "cellspacing", "width", "style", "align", "bgcolor"],
       font: ["color", "face", "size"],
+      div: ["id"],
+      hr: ["id"],
     },
+    // Only the markers that tell the reader where quoted history starts.
+    allowedClasses: { "*": QUOTE_CLASSES },
     allowedSchemes: ["http", "https", "mailto", "cid", "data"],
     allowedSchemesByTag: { img: ["http", "https", "cid", "data"] },
     transformTags: {
+      div: keepQuoteId,
+      hr: keepQuoteId,
       a: (tagName, attribs) => ({
         tagName,
         attribs: { ...attribs, target: "_blank", rel: "noopener noreferrer nofollow" },

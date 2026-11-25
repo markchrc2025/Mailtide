@@ -50,3 +50,10 @@ test("textToHtml turns quoted history into a foldable blockquote", () => {
   assert.ok(out.includes('<div class="mt-quote"><p>On Wed, 25 Nov 2026, Mark &lt;m@x.ph&gt; wrote:</p><blockquote>'));
   assert.ok(out.includes("<blockquote><p>older</p></blockquote>"));
 });
+
+test("cleanHtml keeps quote markers but no other classes or ids", () => {
+  const out = cleanHtml('<div class="mt-quote x"><p>On X wrote:</p><blockquote>q</blockquote></div><div id="divRplyFwdMsg">h</div><div id="evil" class="evil">z</div>');
+  assert.match(out, /class="mt-quote"/);
+  assert.match(out, /id="divRplyFwdMsg"/);
+  assert.doesNotMatch(out, /evil/);
+});

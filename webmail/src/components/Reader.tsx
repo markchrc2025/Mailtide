@@ -218,7 +218,7 @@ export default function Reader({ message: m, thread, loading, role, folders, onB
   );
 }
 
-const QUOTE_CSS = `.mt-quote,.gmail_quote,blockquote,#divRplyFwdMsg,#divRplyFwdMsg~*,#appendonsend~*,hr#stopSpelling~*{display:none}`;
+const QUOTE_CSS = `.mt-quote,.gmail_quote,.gmail_quote_container,.moz-cite-prefix,.yahoo_quoted,blockquote,#divRplyFwdMsg,#divRplyFwdMsg~*,#appendonsend~*,hr#stopSpelling~*{display:none}`;
 
 function MessageCard({
   m,
