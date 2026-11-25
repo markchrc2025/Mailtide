@@ -74,3 +74,24 @@ postal-delivery direct  --reason "seed test" --seed you@example.com
 - Send limits: 500 per hour on Postal servers sentire-prod and sagd.
 - `blocklist-check` runs daily at 06:17 Manila (`blocklist-check.timer`). It checks Spamhaus ZEN, Barracuda, SpamCop, UCEPROTECT 1 and PSBL and emails `mcrc.business.solutions@gmail.com` through Postal on a listing. Test: `blocklist-check --ip 127.0.0.2`. Log: `/var/log/blocklist-check.log`.
 - ses-webhook stays running for SMTP2GO mode.
+
+## MailTide sends through Postal (P3, 25 Nov 2026)
+
+- Postal server **mailtide-relay** (organization Sentire Solutions, IP pool main-ipv4, send limit 1,000 per hour). Credentials: SMTP `mailtide-relay` (used by mailcow, stored in `/root/mailtide-relay.cred`) and API `mailtide-notifier` (`/root/mailtide-notifier.key`). Both files mode 600, never printed.
+- `mail.sentire.solutions` and `mailtide.sentire.solutions` are organization-level Postal domains, so app servers and mailtide-relay can both send from them.
+- mailcow relayhost 1 = `[172.22.1.1]:2587` with the mailtide-relay login, set on domains `mailtide.sentire.solutions` and `mail.sentire.solutions`. Every MailTide user's outgoing mail goes through Postal and follows the delivery switch.
+- Pass-through transports now: mail.mcrctas.com, thirdsideworks.com, rp.postal.sentire.solutions, psrp.mail.sentire.solutions, psrp.mailtide.sentire.solutions (all to `[172.22.1.1]:2587`). Every new customer domain needs its `psrp.<domain>` added here.
+
+DNS added in GoDaddy (sentire.solutions zone): `postal-ULFIJn._domainkey.mailtide` TXT (Postal DKIM), `psrp.mailtide` CNAME rp.postal.sentire.solutions, `mailtide` MX 10 mx.sentire.solutions, `dkim._domainkey.mail` TXT (mailcow DKIM), `mailtide` SPF changed to `v=spf1 ip4:169.58.24.215 include:spf.postal.sentire.solutions ~all`.
+
+### Free shared domain
+
+`mail.sentire.solutions` is a mailbox domain in mailcow (was a pass-through). Its MX stays `mx.postal.sentire.solutions`, which is the same server, so no DNS change was needed. Mailboxes: `postmaster@` (`/root/mail-sentire-postmaster.txt`) and the test mailbox `free-test@` (`/root/mail-sentire-free-test.txt`, limit 50 per hour). Reserved names (no-reply, noreply, alerts, canary, postal, abuse, admin, security, support, billing, hostmaster, webmaster, root, sentire, mailtide, mailer-daemon) are aliases to postmaster@, so nobody can register them.
+
+### Bounce notices (FR-22)
+
+Postal 3.3.7 sends no bounce notice for outgoing mail (spike S-2). `mailtide-ndr` (timer every minute) reads new HardFail and Bounced messages on mailtide-relay and sends the sender a Sentire-styled notice from `mailer-daemon@mailtide.sentire.solutions` (tag `ndr`) with the original attached. State: `/var/lib/mailtide-ndr/last_id`. Logs: `journalctl -u mailtide-ndr`.
+
+### SMTP2GO mode and MailTide
+
+SMTP2GO only accepts sender domains verified in the SMTP2GO account. `mail.sentire.solutions` is verified there; `mailtide.sentire.solutions` is not, so in SMTP2GO mode MailTide mail from it is refused. The smarthost (image postal-smarthost:6) now sends bounce reports for `psrp.*` and `rp.postal.sentire.solutions` back to our own MX instead of through SMTP2GO, so a refusal reaches Postal (status Bounced) and the sender gets a notice instead of losing the mail silently. Before relying on SMTP2GO mode for MailTide, verify each MailTide domain in SMTP2GO.

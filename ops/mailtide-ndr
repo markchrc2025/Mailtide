@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""mailtide-ndr: Sentire-styled bounce notices for MailTide users (FR-22, P3.4).
+
+Postal 3.3.7 does not send a bounce notice for outgoing mail; it only marks the
+message HardFail (rejected while sending) or Bounced (a bounce came back later).
+This job runs every minute (mailtide-ndr.timer), finds new failed messages on the
+Postal server "mailtide-relay" and sends the sender a notice like Gmail or Outlook:
+subject "Undelivered: <subject>", the recipient, a status bar with the failing
+step in red, the reason in plain words, "How to fix it", technical details, and
+the original message attached.
+
+  mailtide-ndr            process new failures
+  mailtide-ndr --init     mark everything up to now as seen
+  mailtide-ndr --dry-run  print what would be sent
+"""
+import argparse, base64, html, json, os, re, subprocess, sys, urllib.request
+import yaml
+
+SERVER_DB = "postal-server-3"           # Postal server mailtide-relay
+STATE = "/var/lib/mailtide-ndr/last_id"
+KEYFILE = "/root/mailtide-notifier.key"  # API credential mailtide-notifier (server mailtide-relay)
+FROM = "MailTide Mail Delivery <mailer-daemon@mailtide.sentire.solutions>"
+API = "http://127.0.0.1:5000/api/v1"
+SKIP_SENDERS = re.compile(r"^(mailer-daemon|postmaster|no-?reply)@", re.I)
+
+
+def db(sql):
+    pw = yaml.safe_load(open("/opt/postal/config/postal.yml"))["main_db"]["password"]
+    r = subprocess.run(["docker", "exec", "-e", f"MYSQL_PWD={pw}", "postal-mariadb", "mariadb", "-uroot", "-N", "-B",
+                        SERVER_DB, "-e", sql], capture_output=True, text=True, check=True)
+    return [line.split("\t") for line in r.stdout.splitlines() if line]
+
+
+def api(path, body):
+    req = urllib.request.Request(f"{API}/{path}", data=json.dumps(body).encode(),
+                                 headers={"X-Server-API-Key": open(KEYFILE).read().strip(),
+                                          "Content-Type": "application/json", "Host": "postal.sentire.solutions"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def plain_reason(output, details, rcpt):
+    text = f"{output or ''} {details or ''}"
+    dom = rcpt.split("@")[-1]
+    rules = [
+        (r"sender domain not verified|not verified sender|unverified sender",
+         "Sentire's backup sending route did not accept your domain, so the message was not sent.",
+         "Send it again later. Sentire has been told; if it is urgent, contact Sentire support."),
+        (r"5\.1\.1|user unknown|no such user|does not exist|unknown user|recipient.*(not found|rejected)|mailbox unavailable",
+         f"The address {rcpt} does not exist at {dom}.",
+         "Check the spelling of the address. If it is right, ask the person for another address."),
+        (r"5\.2\.2|mailbox full|quota|over quota|insufficient storage",
+         f"The mailbox {rcpt} is full.",
+         "Try again later, or reach the person another way and ask them to free up space."),
+        (r"5\.1\.2|no mx|domain.*(not found|does not exist)|nxdomain|host not found|no hosts to try",
+         f"The domain {dom} does not accept email.",
+         "Check the part after @. The domain may be misspelt or has no mail service."),
+        (r"5\.7\.\d|spam|blocked|policy|blacklist|blocklist|reputation",
+         f"{dom} refused the message because of its content or a sending policy.",
+         "Remove links or attachments that look unusual and try again. If it keeps happening, contact Sentire support."),
+        (r"5\.3\.4|message size|too large",
+         "The message is too large for the recipient's mail server.",
+         "Send smaller attachments, or share a link instead of the file."),
+        (r"timed? ?out|retries exhausted|connection",
+         f"The mail server for {dom} could not be reached for 2 days.",
+         "Try again later or contact the person another way."),
+    ]
+    for pat, why, fix in rules:
+        if re.search(pat, text, re.I):
+            return why, fix
+    return (f"The mail server for {dom} would not accept the message.",
+            "Check the address and try again. If it keeps happening, forward this notice to Sentire support.")
+
+
+def page(sender, rcpt, subject, why, fix, tech, when):
+    e = html.escape
+    step = lambda label, sub, state: (
+        f'<td style="padding:10px 12px;text-align:center;border-radius:8px;'
+        f'background:{"#FDECEC" if state=="fail" else "#EEF6EE"};color:{"#B3261E" if state=="fail" else "#2E6B34"};'
+        f'font:600 13px Arial">{e(label)}<br><span style="font-weight:400;font-size:12px;color:#6B6259">{e(sub)}</span></td>')
+    arrow = '<td style="padding:0 6px;color:#B9AFA4;font:16px Arial">&rarr;</td>'
+    return f"""<!doctype html><html><body style="margin:0;background:#F7F3EE">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F7F3EE;padding:24px 0"><tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;border:1px solid #ECE6DD">
+<tr><td style="background:#2E241C;color:#fff;padding:16px 24px;border-radius:12px 12px 0 0;font:600 16px Arial">MailTide <span style="font-weight:400;color:#D8CFC4">by Sentire</span></td></tr>
+<tr><td style="padding:24px 24px 8px;font:700 20px Arial;color:#B3261E">Your message was not delivered</td></tr>
+<tr><td style="padding:0 24px 16px;font:14px Arial;color:#2E241C">To <b>{e(rcpt)}</b><br><span style="color:#6B6259">Subject: {e(subject or "(no subject)")}</span></td></tr>
+<tr><td style="padding:0 24px 16px"><table role="presentation" cellpadding="0" cellspacing="0"><tr>
+{step("You", sender, "ok")}{arrow}{step("MailTide", "sent", "ok")}{arrow}{step(rcpt.split("@")[-1], "refused", "fail")}
+</tr></table></td></tr>
+<tr><td style="padding:0 24px 8px;font:600 14px Arial;color:#2E241C">What happened</td></tr>
+<tr><td style="padding:0 24px 16px;font:14px Arial;color:#2E241C">{e(why)}</td></tr>
+<tr><td style="padding:0 24px 16px"><div style="background:#FDEEE6;border-radius:8px;padding:12px 14px;font:14px Arial;color:#2E241C"><b>How to fix it</b><br>{e(fix)}</div></td></tr>
+<tr><td style="padding:0 24px 24px;font:12px Arial;color:#6B6259">Technical details<br><span style="font-family:Menlo,Consolas,monospace">{e(tech)}</span><br>{e(when)}. Your original message is attached.</td></tr>
+</table></td></tr></table></body></html>"""
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--init", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    if a.init or not os.path.exists(STATE):
+        top = db("select coalesce(max(id),0) from messages")[0][0]
+        open(STATE, "w").write(json.dumps({"last": int(top), "pending": []}))
+        print(f"initialised at message {top}")
+        return 0
+    st = json.loads(open(STATE).read()) if open(STATE).read().strip().startswith("{") else {"last": int(open(STATE).read().strip() or 0), "pending": []}
+    last, pending = int(st["last"]), [int(x) for x in st.get("pending", [])]
+    notified = set(int(x) for x in st.get("notified", []))
+    # new messages, messages still retrying, and recent messages that bounced after being Sent
+    cond = f"id > {last} or (status = 'Bounced' and id > {max(0, last - 5000)})" + \
+           (f" or id in ({','.join(map(str, pending))})" if pending else "")
+    rows = db("select id, mail_from, rcpt_to, ifnull(subject,''), status, ifnull(tag,''), from_unixtime(timestamp) "
+              f"from messages where scope='outgoing' and ({cond}) order by id")
+    new_last, still_pending = last, []
+    for mid, mail_from, rcpt, subject, status, tag, ts in rows:
+        new_last = max(new_last, int(mid))
+        if status in ("Pending", "SoftFail", "Held"):
+            still_pending.append(int(mid))  # not final yet; look again next run
+            continue
+        if status not in ("HardFail", "Bounced") or tag == "ndr" or SKIP_SENDERS.search(mail_from or "") \
+                or int(mid) in notified:
+            continue
+        d = db(f"select ifnull(output,''), ifnull(details,'') from deliveries where message_id={int(mid)} order by id desc limit 1")
+        output, details = (d[0] + ["", ""])[:2] if d else ("", "")
+        if status == "Bounced":  # reason is in the bounce report that came back, not in the delivery
+            b = db(f"select id from messages where bounce_for_id={int(mid)} order by id desc limit 1")
+            if b:
+                try:
+                    rawb = base64.b64decode(api("messages/message", {"id": int(b[0][0]), "_expansions": ["raw_message"]})
+                                            ["data"]["raw_message"]).decode("utf-8", "replace")
+                    m = re.search(r"Diagnostic-Code:\s*[^;]*;\s*(.+(?:\n[ \t].+)*)", rawb) or \
+                        re.search(r"said:\s*(.+(?:\n[ \t].+)*)", rawb)
+                    if m:
+                        output = re.sub(r"\s+", " ", m.group(1)).strip()
+                except Exception:
+                    pass
+        why, fix = plain_reason(output, details, rcpt)
+        tech = status + ": " + re.sub(r"(\\n|\s)+", " ", (output or details)).strip()[:300]
+        body = page(mail_from, rcpt, subject, why, fix, tech, f"Sent {ts[:19]} UTC")
+        text = (f"Your message to {rcpt} was not delivered.\n\nWhat happened: {why}\nHow to fix it: {fix}\n\n"
+                f"Technical details: {tech}\n")
+        if a.dry_run:
+            print(f"would notify {mail_from} about {rcpt}: {why}")
+            continue
+        attach = []
+        try:
+            raw = api("messages/message", {"id": int(mid), "_expansions": ["raw_message"]})["data"]["raw_message"]
+            attach = [{"name": "Original message.eml", "content_type": "message/rfc822", "data": raw}]
+        except Exception as ex:  # the notice still goes out without the attachment
+            text += f"\n(Original message could not be attached: {ex})\n"
+        res = api("send/message", {"to": [mail_from], "from": FROM, "subject": f"Undelivered: {subject or '(no subject)'}",
+                                   "html_body": body, "plain_body": text, "tag": "ndr", "attachments": attach,
+                                   "headers": {"Auto-Submitted": "auto-replied", "X-MailTide-NDR-For": str(mid)}})
+        notified.add(int(mid))
+        print(f"notified {mail_from} about {rcpt} ({status}): {res.get('status')}")
+    if not a.dry_run:
+        open(STATE, "w").write(json.dumps({"last": new_last, "pending": still_pending[-500:],
+                                            "notified": sorted(notified)[-2000:]}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
