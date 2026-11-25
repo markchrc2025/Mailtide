@@ -1,0 +1,21 @@
+# GoDaddy DNS for sentire.solutions before Microsoft removal, 25 Nov 2026 15:58 Manila (long values cut)
+MX @ sentire-solutions.mail.protection.outlook.com. (Priority: 0)          <- REMOVED (Microsoft)
+TXT @ MS=ms46005797                                                        <- REMOVED (Microsoft)
+TXT @ v=spf1 include:spf.protection.outlook.com -all                       <- REPLACED (Microsoft)
+CNAME autodiscover autodiscover.outlook.com.                               <- REPLACED (Microsoft)
+CNAME enterpriseenrollment enterpriseenrollment-s.manage.microsoft.com.    <- REMOVED (Microsoft)
+CNAME enterpriseregistration enterpriseregistration.windows.net.           <- REMOVED (Microsoft)
+# kept unchanged
+A @ 91.90.80.4 | A *.apps | A books | A books-api | A cloud | A console 169.58.24.215 | A deploy | A dokploy | A dokploy-mcp | A ledger
+A mailtide 169.58.24.215 | A monitor 169.58.24.215 | A mx 169.58.24.215 | A mx.postal 169.58.24.215 | A payroll | A postal 169.58.24.215
+A rp.postal 169.58.24.215 | A s3 169.58.24.215 | A status | A storage 169.58.24.215 | A www 91.90.80.4
+NS @ ns09/ns10.domaincontrol.com
+CNAME auth authenticize.sliplane.app. | 3x *._domainkey -> *.dkim.amazonses.com | CNAME _domainconnect
+CNAME em701876 / em701876.{helpdesk,ledger,mail,mailtide} -> return.smtp2go.net. | link / link.{helpdesk,ledger,mail,mailtide} -> track.smtp2go.net.
+CNAME s701876._domainkey / .{helpdesk,ledger,mail,mailtide} -> dkim.smtp2go.net.
+CNAME psrp.{helpdesk,ledger,mail,mailtide} -> rp.postal.sentire.solutions.
+MX mail -> mx.postal.sentire.solutions (10) | MX mailtide -> mx.sentire.solutions (10) | MX plunk / send -> amazonses feedback | MX rp.postal -> postal.sentire.solutions
+TXT @ google-site-verification=dRRDG99dS5mZZ0-c08NTrCKSbd2i4kIb172X47slp60
+TXT dc-fd741b8612._spfm.send | dkim._domainkey.mail | dkim._domainkey.mailtide | helpdesk/ledger/mail/mailtide SPF | plunk SPF
+TXT postal-*._domainkey.{mailtide,ledger,mail,helpdesk} | postal._domainkey.rp.postal | rp.postal SPF | send SPF | spf.postal
+TXT _dmarc / _dmarc.{ledger,mail,mailtide} v=DMARC1; p=none;

@@ -99,3 +99,12 @@ SMTP2GO only accepts sender domains verified in the SMTP2GO account. `mail.senti
 ### Received header on user mail
 
 mailcow's `data/conf/postfix/anonymize_headers.pcre` hides each user's own IP address on outgoing mail (privacy, kept on purpose). Its label was changed from "by localhost (Mailerdaemon)" to "by mx.sentire.solutions (MailTide)" on 25 Nov 2026 (backup beside the file). A mailcow update can put the stock text back: after every mailcow update, run `grep MailTide /opt/mailcow-dockerized/data/conf/postfix/anonymize_headers.pcre` and re-apply if empty.
+
+## sentire.solutions moved from Microsoft 365 to MailTide (25 Nov 2026)
+
+Owner request: no official mail on sentire.solutions; Microsoft user deleted. Removed Microsoft DNS (MX outlook, SPF outlook, MS= TXT, autodiscover to outlook, enterpriseenrollment, enterpriseregistration); full list before the change in `ops/dns-backup-sentire.solutions-2026-11-25.txt`.
+
+- MX `10 mx.sentire.solutions`; SPF `v=spf1 ip4:169.58.24.215 include:spf.postal.sentire.solutions ~all`; DKIM `dkim._domainkey` (mailcow) and `postal-I2tKTe._domainkey` (Postal); `psrp` CNAME rp.postal; `autodiscover` and `autoconfig` CNAME mx.sentire.solutions (Caddy certificates added). DMARC `p=none` and google-site-verification kept. Postal and SMTP2GO subdomain records untouched.
+- mailcow domain sentire.solutions (relayhost 1 = Postal), mailbox `crcanlubo@sentire.solutions` (password in `/root/sentire-crcanlubo.txt`, change on first login), aliases postmaster, abuse, hostmaster, webmaster, admin to crcanlubo@. Pass-through `psrp.sentire.solutions` to Postal 2587.
+- Postal: organization-level domain sentire.solutions (DKIM OK, SPF OK, return path OK).
+- zone-watch `expected.txt` updated for sentire.solutions (backup beside it). mcrctas.com still Microsoft 365 and still protected.
