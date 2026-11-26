@@ -85,7 +85,7 @@ async function searchIds(c: ImapFlow, ids: string[]): Promise<number[]> {
  * Loads the opened message and the rest of its conversation from the open
  * folder, Inbox and Sent. Marks the opened message read. Newest first.
  */
-export async function loadThread(c: ImapFlow, folder: string, uid: number): Promise<{ opened: Full; messages: Full[] } | null> {
+export async function loadThread(c: ImapFlow, folder: string, uid: number, also: number[] = []): Promise<{ opened: Full; messages: Full[] } | null> {
   let sent = "";
   try {
     sent = await folderFor(c, "sent");
@@ -105,7 +105,23 @@ export async function loadThread(c: ImapFlow, folder: string, uid: number): Prom
 
   const all: Full[] = [opened];
   const have = new Set([`${folder}\u0000${uid}`]);
-  let ids = idsOf(opened);
+  // Rows the list already folded into this conversation are always shown,
+  // even when their reply headers do not point at each other.
+  if (also.length) {
+    const lock = await openFresh(c, folder);
+    try {
+      for (const u of also) {
+        const key = `${folder}\u0000${u}`;
+        if (u === uid || have.has(key) || all.length >= MAX_IN_THREAD) continue;
+        have.add(key);
+        const m = await parseOne(c, folder, u, false);
+        if (m) all.push(m);
+      }
+    } finally {
+      lock.release();
+    }
+  }
+  let ids = [...new Set(all.flatMap((m) => idsOf(m)))];
   // Two passes catch replies to replies that only reference a middle message.
   for (let pass = 0; pass < 2 && ids.length && all.length < MAX_IN_THREAD; pass++) {
     const before = new Set(ids);

@@ -9,8 +9,14 @@ export const GET = authed(async (user, req: Request, ctx: { params: Promise<{ ui
   const { uid } = await ctx.params;
   const n = Number(uid);
   if (!Number.isInteger(n) || n <= 0) return fail("Bad message id.");
-  const folder = new URL(req.url).searchParams.get("folder") || "INBOX";
-  const out = await withImap(user, (c) => loadThread(c, folder, n));
+  const sp = new URL(req.url).searchParams;
+  const folder = sp.get("folder") || "INBOX";
+  const also = (sp.get("also") || "")
+    .split(",")
+    .map(Number)
+    .filter((x) => Number.isInteger(x) && x > 0)
+    .slice(0, 40);
+  const out = await withImap(user, (c) => loadThread(c, folder, n, also));
   if (!out) return fail("That message is gone. It may have been moved or deleted.", 404);
   return json({ subject: out.opened.subject, opened: { uid: out.opened.uid, folder: out.opened.folder }, messages: out.messages });
 });

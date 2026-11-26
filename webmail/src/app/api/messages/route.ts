@@ -3,6 +3,7 @@ import type { FetchMessageObject, MessageAddressObject } from "imapflow";
 import { authed, json } from "@/lib/http";
 import { withFolder } from "@/lib/imap";
 import { snippetOf } from "@/lib/mail";
+import { groupRows, type ListRow } from "@/lib/thread";
 
 export const dynamic = "force-dynamic";
 const PAGE = 40;
@@ -23,6 +24,8 @@ export const GET = authed(async (user, req: Request) => {
   const page = Math.max(1, Number(url.searchParams.get("page") || 1));
   const q = (url.searchParams.get("q") || "").trim().slice(0, 200);
   const unreadOnly = url.searchParams.get("unread") === "1";
+  // Drafts are listed one by one; everything else folds into conversations.
+  const grouped = url.searchParams.get("group") !== "0";
 
   const result = await withFolder(user, folder, async (c) => {
     const exists = typeof c.mailbox === "object" ? c.mailbox.exists : 0;
@@ -39,7 +42,7 @@ export const GET = authed(async (user, req: Request) => {
     const slice = uids.slice((page - 1) * PAGE, page * PAGE);
     if (!slice.length) return { total, exists, messages: [] };
 
-    const rows: Array<Record<string, unknown>> = [];
+    const rows: Array<ListRow & Record<string, unknown>> = [];
     for await (const m of c.fetch(
       slice,
       { uid: true, flags: true, envelope: true, internalDate: true, size: true, bodyStructure: true, source: { start: 0, maxLength: 6144 } },
@@ -66,10 +69,13 @@ export const GET = authed(async (user, req: Request) => {
         attachments: hasAttachments(m.bodyStructure),
         size: m.size,
         snippet,
+        messageId: m.envelope?.messageId || null,
+        inReplyTo: m.envelope?.inReplyTo || null,
       });
     }
-    rows.sort((a, b) => (b.uid as number) - (a.uid as number));
-    return { total, exists, messages: rows };
+    rows.sort((a, b) => b.uid - a.uid);
+    const list = grouped ? groupRows(rows) : rows.map((r) => ({ ...r, uids: [r.uid], count: 1 }));
+    return { total, exists, messages: list.map(({ messageId: _m, inReplyTo: _r, ...r }) => r) };
   });
 
   return json({ folder, page, pageSize: PAGE, ...result });

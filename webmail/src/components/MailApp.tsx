@@ -66,6 +66,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         const p = new URLSearchParams({ folder, page: String(page) });
         if (activeQuery) p.set("q", activeQuery);
         if (unreadOnly) p.set("unread", "1");
+        if (role === "drafts") p.set("group", "0");
         const r = await api<ListResp>(`/api/messages?${p}`);
         setRows(r.messages);
         setTotal(r.total);
@@ -76,7 +77,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         setLoading(false);
       }
     },
-    [folder, page, activeQuery, unreadOnly],
+    [folder, page, activeQuery, unreadOnly, role],
   );
 
   useEffect(() => {
@@ -113,11 +114,21 @@ export default function MailApp({ email, build }: { email: string; build: string
       setSelected(uid);
       setMessageLoading(true);
       try {
-        const t = await api<Thread>(`/api/thread/${uid}?folder=${encodeURIComponent(folder)}`);
+        const row = rows.find((r) => r.uid === uid);
+        const also = (row?.uids || []).filter((u) => u !== uid);
+        const t = await api<Thread>(
+          `/api/thread/${uid}?folder=${encodeURIComponent(folder)}${also.length ? `&also=${also.join(",")}` : ""}`,
+        );
         const m = t.messages.find((x) => x.uid === t.opened.uid && x.folder === t.opened.folder) || t.messages[0];
         setThread(t.messages);
         setMessage(m);
         setRows((rs) => rs.map((r) => (r.uid === uid ? { ...r, seen: true } : r)));
+        // Opening a conversation reads all of it, like Outlook.
+        const unreadOthers = t.messages.filter((x) => x.folder === folder && x.unread && x.uid !== uid).map((x) => x.uid);
+        if (unreadOthers.length)
+          api("/api/actions", { method: "POST", body: JSON.stringify({ folder, uids: unreadOthers, action: "read" }) })
+            .then(() => loadFolders())
+            .catch(() => null);
         setFolders((fs) =>
           fs.map((f) => (f.path === folder && rows.find((r) => r.uid === uid && !r.seen) ? { ...f, unseen: Math.max(0, f.unseen - 1) } : f)),
         );
@@ -128,30 +139,33 @@ export default function MailApp({ email, build }: { email: string; build: string
         setMessageLoading(false);
       }
     },
-    [folder, rows, flash],
+    [folder, rows, flash, loadFolders],
   );
 
   const act = useCallback(
-    async (action: string, uids: number[], target?: string) => {
+    async (action: string, picked: number[], target?: string) => {
+      // A list row stands for its whole conversation.
+      const uids = [...new Set(picked.flatMap((u) => rows.find((r) => r.uid === u)?.uids ?? [u]))];
       if (!uids.length) return;
+      const hit = (r: MessageRow) => (r.uids ?? [r.uid]).some((u) => uids.includes(u));
       try {
         const r = await api<{ moved: string | null; deleted: boolean }>("/api/actions", {
           method: "POST",
           body: JSON.stringify({ folder, uids, action, target }),
         });
         if (r.moved || r.deleted) {
-          setRows((rs) => rs.filter((x) => !uids.includes(x.uid)));
+          setRows((rs) => rs.filter((x) => !hit(x)));
           setTotal((t) => Math.max(0, t - uids.length));
           if (selected && uids.includes(selected)) {
             setSelected(null);
             setMessage(null);
           }
           const label: Record<string, string> = { archive: "Archived", trash: r.deleted ? "Deleted for good" : "Moved to Trash", spam: "Marked as spam", notspam: "Moved to Inbox", move: "Moved" };
-          flash(`${label[action] ?? "Done"}${uids.length > 1 ? ` (${uids.length})` : ""}`);
+          flash(`${label[action] ?? "Done"}${picked.length > 1 ? ` (${picked.length})` : ""}`);
         } else {
           setRows((rs) =>
             rs.map((x) =>
-              uids.includes(x.uid)
+              hit(x)
                 ? { ...x, seen: action === "read" ? true : action === "unread" ? false : x.seen, flagged: action === "flag" ? true : action === "unflag" ? false : x.flagged }
                 : x,
             ),
@@ -164,7 +178,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         flash((e as Error).message, "error");
       }
     },
-    [folder, selected, message, flash, loadFolders],
+    [folder, selected, message, flash, loadFolders, rows],
   );
 
   function switchFolder(path: string) {
@@ -430,6 +444,11 @@ export default function MailApp({ email, build }: { email: string; build: string
                     <b className={`flex-1 truncate text-[13.5px] text-ink ${m.seen ? "font-normal" : "font-semibold"}`}>
                       {role === "sent" || role === "drafts" ? `To: ${displayName(who)}` : displayName(who)}
                     </b>
+                    {(m.count ?? 1) > 1 && (
+                      <span className="flex-none rounded-md bg-sand px-1.5 text-[11px] font-semibold text-muted" aria-label={`${m.count} emails in this conversation`}>
+                        {m.count}
+                      </span>
+                    )}
                     {m.attachments && <Clip size={13} className="flex-none text-muted" />}
                     <span className="flex-none text-xs text-muted">{shortDate(m.date)}</span>
                   </div>

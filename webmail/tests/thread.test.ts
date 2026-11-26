@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hasQuote, idsOf, linked, normId, orderThread } from "../src/lib/thread.ts";
+import { hasQuote, idsOf, linked, normId, orderThread , groupRows } from "../src/lib/thread.ts";
 
 test("normId wraps and lower-cases Message-IDs", () => {
   assert.equal(normId("<ABC@x.ph>"), "<abc@x.ph>");
@@ -35,4 +35,31 @@ test("hasQuote spots quoted history", () => {
   assert.ok(hasQuote('<div class="gmail_quote">x</div>'));
   assert.ok(hasQuote('<div id="divRplyFwdMsg">x</div>'));
   assert.ok(!hasQuote("<p>hi</p>"));
+});
+
+test("groupRows folds Outlook replies that only share a topic", () => {
+  const base = { seen: true, flagged: false, attachments: false };
+  const rows = [
+    { ...base, uid: 9, subject: "Re: Thread Test 2", date: "2026-11-26T10:04:00Z", messageId: "<c@x>", inReplyTo: "<sent2@me>", seen: false },
+    { ...base, uid: 8, subject: "RE: Thread Test 2", date: "2026-11-26T09:58:00Z", messageId: "<b@x>", inReplyTo: "<sent1@me>" },
+    { ...base, uid: 7, subject: "Trial from outlook", date: "2026-11-25T09:00:00Z", messageId: "<a@x>" },
+    { ...base, uid: 6, subject: "Invoice", date: "2026-11-25T08:00:00Z", messageId: "<i1@x>" },
+    { ...base, uid: 5, subject: "Invoice", date: "2026-11-25T07:00:00Z", messageId: "<i2@y>" },
+  ];
+  const g = groupRows(rows);
+  assert.equal(g.length, 4);
+  assert.deepEqual(g[0].uids, [9, 8]);
+  assert.equal(g[0].count, 2);
+  assert.equal(g[0].seen, false);
+  assert.equal(g.filter((r) => r.subject === "Invoice").length, 2, "same topic without a reply stays apart");
+});
+
+test("groupRows joins by In-Reply-To even when the subject changed", () => {
+  const base = { seen: true, flagged: false, attachments: false };
+  const g = groupRows([
+    { ...base, uid: 2, subject: "New title", date: "2026-11-26T10:00:00Z", messageId: "<2@x>", inReplyTo: "<1@x>" },
+    { ...base, uid: 1, subject: "Old title", date: "2026-11-26T09:00:00Z", messageId: "<1@x>" },
+  ]);
+  assert.equal(g.length, 1);
+  assert.equal(g[0].subject, "New title");
 });
