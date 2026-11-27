@@ -55,3 +55,14 @@ test("dateGroup buckets like Outlook", () => {
   assert.equal(dateGroup(new Date(2026, 5, 3, 8).toISOString(), now), "June");
   assert.equal(dateGroup(new Date(2025, 5, 3, 8).toISOString(), now), "Older");
 });
+
+test("underOwn accepts both spellings of the address and refuses other users", async () => {
+  const { underOwn } = await import("../src/lib/dav.ts");
+  const u = { email: "Test@mailtide.sentire.solutions" };
+  assert.equal(underOwn(u, "/SOGo/dav/test@mailtide.sentire.solutions/Contacts/personal/a.vcf", "Contacts/personal/"), true);
+  assert.equal(underOwn(u, "/SOGo/dav/test%40mailtide.sentire.solutions/Contacts/personal/a.vcf", "Contacts/personal/"), true);
+  assert.equal(underOwn(u, "https://mx.sentire.solutions/SOGo/dav/test%40mailtide.sentire.solutions/Calendar/personal/e.ics", ""), true);
+  assert.equal(underOwn(u, "/SOGo/dav/demo@mailtide.sentire.solutions/Contacts/personal/a.vcf", "Contacts/personal/"), false);
+  assert.equal(underOwn(u, "/SOGo/dav/test@mailtide.sentire.solutions/Contacts/personal/../../../demo@mailtide.sentire.solutions/Contacts/personal/a.vcf", "Contacts/personal/"), false);
+  assert.equal(underOwn(u, "/SOGo/dav/test@mailtide.sentire.solutions.evil/Contacts/personal/a.vcf", "Contacts/personal/"), false);
+});

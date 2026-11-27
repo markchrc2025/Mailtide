@@ -7,6 +7,26 @@ import { randomUUID } from "node:crypto";
 type Creds = { email: string; password: string };
 
 export const DAV_BASE = (process.env.DAV_URL || "https://mx.sentire.solutions/SOGo/dav").replace(/\/$/, "");
+
+const plainPath = (p: string) => {
+  let out = p;
+  try {
+    out = decodeURIComponent(p);
+  } catch {
+    /* keep as is */
+  }
+  return out.toLowerCase();
+};
+
+/**
+ * True when a DAV href sits under the signed-in user's own collection. The server answers with the
+ * address written either as test@x or test%40x, so both sides are decoded before comparing; ".." is refused.
+ */
+export function underOwn(user: { email: string }, href: string, sub: string) {
+  const path = plainPath(href.replace(/^https?:\/\/[^/]+/i, ""));
+  if (path.split("/").includes("..")) return false;
+  return path.startsWith(plainPath(`${new URL(DAV_BASE).pathname}/${user.email}/${sub}`));
+}
 const ORIGIN = new URL(DAV_BASE).origin;
 
 export class DavError extends Error {
@@ -269,7 +289,7 @@ export async function createEvent(user: Creds & { name?: string }, e: NewEvent) 
 }
 
 export async function deleteEvent(user: Creds, href: string) {
-  if (!href.startsWith(new URL(DAV_BASE).pathname + "/" + encodeURIComponent(user.email) + "/")) throw new DavError(403, "That event is not yours.");
+  if (!underOwn(user, href, "")) throw new DavError(403, "That event is not yours.");
   await dav(user, href, "DELETE");
 }
 
@@ -371,7 +391,7 @@ export function buildCard(c: ContactInput, uid: string) {
   ]);
 }
 
-const ownHref = (user: Creds, href: string) => href.startsWith(new URL(bookHref(user)).pathname);
+const ownHref = (user: Creds, href: string) => underOwn(user, href, "Contacts/personal/");
 
 export async function saveContact(user: Creds, c: ContactInput, existing?: { href: string; uid: string; etag?: string }) {
   if (existing && !ownHref(user, existing.href)) throw new DavError(403, "That contact is not yours.");

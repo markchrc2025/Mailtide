@@ -111,6 +111,7 @@ export default function MailApp({ email, build }: { email: string; build: string
     }
   }, [flash, box]);
 
+  const listSeq = useRef(0);
   const loadList = useCallback(
     async (opts?: { quiet?: boolean }) => {
       if (!opts?.quiet) setLoading(true);
@@ -120,7 +121,10 @@ export default function MailApp({ email, build }: { email: string; build: string
         if (activeQuery) p.set("q", activeQuery);
         if (unreadOnly) p.set("unread", "1");
         if (role === "drafts" || !grouping) p.set("group", "0");
+        const seq = ++listSeq.current;
         const r = await api<ListResp>(box(`/api/messages?${p}`));
+        // A slower, older answer (another folder, or the list before a setting loaded) must not replace a newer one.
+        if (seq !== listSeq.current) return;
         setRows(r.messages);
         setTotal(r.total);
         setPageSize(r.pageSize);
@@ -279,7 +283,9 @@ export default function MailApp({ email, build }: { email: string; build: string
           }
           const label: Record<string, string> = { archive: "Archived", trash: r.deleted ? "Deleted for good" : "Moved to Trash", spam: "Marked as spam", notspam: "Moved to Inbox", move: "Moved" };
           flash(`${label[action] ?? "Done"}${picked.length > 1 ? ` (${picked.length})` : ""}`);
+          setChecked(new Set());
         } else {
+          // Read, unread and star keep the ticks, so a second action (Archive, Move) can follow as in Outlook.
           setRows((rs) =>
             rs.map((x) =>
               hit(x)
@@ -289,7 +295,6 @@ export default function MailApp({ email, build }: { email: string; build: string
           );
           if (message && uids.includes(message.uid) && (action === "flag" || action === "unflag")) setMessage({ ...message, flagged: action === "flag" });
         }
-        setChecked(new Set());
         loadFolders();
       } catch (e) {
         flash((e as Error).message, "error");
