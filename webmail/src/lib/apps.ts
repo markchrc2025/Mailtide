@@ -11,4 +11,4 @@ export const APPS: SentireApp[] = [
 ];
 
 /** The Admin tile shows for org admins once the admin console ships. */
-export const ADMIN_CONSOLE_READY = false;
+export const ADMIN_CONSOLE_READY = true;

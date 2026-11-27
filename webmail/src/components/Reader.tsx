@@ -30,6 +30,11 @@ type Props = {
   onCompose: (d: Draft) => void;
   onSent: () => void;
   onError: (text: string) => void;
+  shared?: { name: string; address: string; canSend: boolean } | null;
+  othersReplying?: { name: string; since: string }[];
+  sendQuery?: string;
+  threadKey?: string;
+  onReplying?: () => void;
 };
 
 export function replyDraft(m: FullMessage, me: string, all: boolean): Draft {
@@ -58,8 +63,26 @@ export function forwardDraft(m: FullMessage): Draft {
   return { subject: prefixSubject("Fwd", m.subject), text: `\n\n${head}\n\n${m.text}`, forwardAttachments: m.attachments };
 }
 
-export default function Reader({ message: m, thread, loading, role, folders, onBack, onAction, onCompose, onSent, onError }: Props) {
+export default function Reader({
+  message: m,
+  thread,
+  loading,
+  role,
+  folders,
+  onBack,
+  onAction,
+  onCompose,
+  onSent,
+  onError,
+  shared = null,
+  othersReplying = [],
+  sendQuery = "",
+  threadKey,
+  onReplying,
+}: Props) {
   const [quick, setQuick] = useState("");
+  const [override, setOverride] = useState(false);
+  const announced = useRef(false);
   const [sending, setSending] = useState(false);
   const [me, setMe] = useState("");
 
@@ -69,6 +92,8 @@ export default function Reader({ message: m, thread, loading, role, folders, onB
 
   useEffect(() => {
     setQuick("");
+    setOverride(false);
+    announced.current = false;
   }, [m?.uid]);
 
   if (loading && !m) {
@@ -102,9 +127,10 @@ export default function Reader({ message: m, thread, loading, role, folders, onB
     setSending(true);
     const d = replyDraft(replyBase, me, false);
     try {
-      await api("/api/send", {
+      await api(`/api/send${sendQuery}`, {
         method: "POST",
         body: JSON.stringify({
+          threadKey: sendQuery ? threadKey : undefined,
           to: (d.to || "").split(",").map((s) => s.trim()).filter(Boolean),
           subject: d.subject,
           text: quick + (d.text || ""),
@@ -170,6 +196,24 @@ export default function Reader({ message: m, thread, loading, role, folders, onB
 
       <div className="scroll-thin flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-[880px] flex-col gap-4 px-4 py-6 md:px-7">
+          {shared && (
+            <div className="flex items-center gap-2.5 rounded-xl bg-[#DDE7F3] px-3.5 py-2.5 text-[13.5px] text-[#2F5B8A]">
+              <span className="flex-1">
+                You&apos;re in the shared mailbox <b>{shared.name}</b>.{" "}
+                {shared.canSend ? `Replies go out as ${shared.address}.` : "You can read and file mail here, but not reply."}
+              </span>
+            </div>
+          )}
+          {othersReplying.length > 0 && (
+            <div role="status" className="flex items-center gap-2.5 rounded-xl border border-orange-line bg-orange-soft px-3.5 py-3 text-sm text-orange-text">
+              <span className="flex-1">
+                <b>
+                  {othersReplying.map((o) => o.name).join(", ")} {othersReplying.length === 1 ? "is" : "are"} replying to this email now.
+                </b>{" "}
+                {othersReplying[0].since ? `Started ${shortDate(othersReplying[0].since)}. ` : ""}You&apos;ll see the reply here when it&apos;s sent.
+              </span>
+            </div>
+          )}
           <h1 className="font-head m-0 text-[20px] font-semibold leading-snug tracking-tight md:text-[22px]">{m.subject}</h1>
 
           {msgs.length > 1 && (
@@ -186,13 +230,27 @@ export default function Reader({ message: m, thread, loading, role, folders, onB
             />
           ))}
 
-          {role !== "sent" && role !== "drafts" && (
+          {role !== "sent" && role !== "drafts" && (!shared || shared.canSend) && othersReplying.length > 0 && !override && (
+            <div className="flex flex-wrap items-center gap-2.5 rounded-[14px] border border-dashed border-line-strong bg-paper px-4 py-3.5">
+              <span className="min-w-[240px] flex-1 text-sm text-ink-soft">To avoid two answers, the reply box waits while {othersReplying[0].name} is writing.</span>
+              <button onClick={() => setOverride(true)} className="h-9 rounded-lg border border-line-strong bg-white px-3.5 text-[13.5px] font-semibold hover:bg-bg">
+                Reply anyway
+              </button>
+            </div>
+          )}
+          {role !== "sent" && role !== "drafts" && (!shared || shared.canSend) && (othersReplying.length === 0 || override) && (
             <div className="flex flex-wrap items-center gap-2.5 rounded-[14px] border border-line bg-white px-3.5 py-3">
               <label htmlFor="mt-quick" className="sr-only">Quick reply</label>
               <input
                 id="mt-quick"
                 value={quick}
                 onChange={(e) => setQuick(e.target.value)}
+                onFocus={() => {
+                  if (!announced.current) {
+                    announced.current = true;
+                    onReplying?.();
+                  }
+                }}
                 onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && sendQuick()}
                 placeholder={`Reply to ${displayName(replySender)}`}
                 className="h-10 min-w-[200px] flex-1 bg-transparent text-sm text-ink outline-none"
@@ -208,7 +266,7 @@ export default function Reader({ message: m, thread, loading, role, folders, onB
                 onClick={sendQuick}
                 className="h-[38px] rounded-[9px] bg-orange px-4 text-[13px] font-semibold text-white hover:bg-orange-press disabled:opacity-50"
               >
-                {sending ? "Sending..." : "Send"}
+                {sending ? "Sending..." : shared ? `Send as ${shared.name}` : "Send"}
               </button>
             </div>
           )}

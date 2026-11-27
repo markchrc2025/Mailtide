@@ -1,3 +1,4 @@
+import { boxFor } from "@/lib/shared";
 import { simpleParser } from "mailparser";
 import { authed, fail } from "@/lib/http";
 import { withFolder } from "@/lib/imap";
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 const SAFE_INLINE = /^(image\/(png|jpe?g|gif|webp)|application\/pdf|text\/plain)$/i;
 
 export const GET = authed(async (user, req: Request, ctx: { params: Promise<{ uid: string; idx: string }> }) => {
+  const box = await boxFor(user, req, "read");
   const { uid, idx } = await ctx.params;
   const n = Number(uid);
   const i = Number(idx);
@@ -14,7 +16,7 @@ export const GET = authed(async (user, req: Request, ctx: { params: Promise<{ ui
   const folder = new URL(req.url).searchParams.get("folder") || "INBOX";
   const download = new URL(req.url).searchParams.get("download") === "1";
 
-  const att = await withFolder(user, folder, async (c) => {
+  const att = await withFolder(box, folder, async (c) => {
     const m = await c.fetchOne(String(n), { source: true }, { uid: true });
     if (!m || !m.source) return null;
     const p = await simpleParser(m.source);

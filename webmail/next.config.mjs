@@ -2,7 +2,7 @@
 const nextConfig = {
   output: "standalone",
   poweredByHeader: false,
-  serverExternalPackages: ["imapflow", "mailparser", "nodemailer"],
+  serverExternalPackages: ["imapflow", "mailparser", "nodemailer", "pg", "ical.js"],
   async headers() {
     return [
       {

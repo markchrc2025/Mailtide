@@ -34,8 +34,10 @@ import {
 } from "./Icons";
 import { Shell } from "./Shell";
 import Reader, { forwardDraft, replyDraft } from "./Reader";
-import Composer, { type Draft } from "./Composer";
+import Composer, { type Draft, type FromOption } from "./Composer";
 
+type SharedBox = { address: string; name: string; access: "read" | "sendas" | "full"; options: { showReplying?: boolean } };
+type TeamRow = { thread: string; member: string; name: string; started_at?: string; at?: string };
 type ListResp = { total: number; page: number; pageSize: number; messages: MessageRow[] };
 type Toast = { text: string; tone: "ok" | "error" } | null;
 
@@ -59,6 +61,13 @@ export default function MailApp({ email, build }: { email: string; build: string
   const [draft, setDraft] = useState<Draft | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [drawer, setDrawer] = useState(false);
+  const [shared, setShared] = useState<SharedBox[]>([]);
+  const [mbox, setMbox] = useState<string | null>(null);
+  const [team, setTeam] = useState<{ replying: TeamRow[]; replied: TeamRow[] }>({ replying: [], replied: [] });
+  const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
+  const [notReplied, setNotReplied] = useState(false);
+  const box = useCallback((u: string) => (mbox ? `${u}${u.includes("?") ? "&" : "?"}mbox=${encodeURIComponent(mbox)}` : u), [mbox]);
+  const sharedBox = shared.find((x) => x.address === mbox) || null;
   const [tab, setTab] = useState<"Home" | "View" | "Help">("Home");
   const [newMenu, setNewMenu] = useState(false);
   const [paneOpen, setPaneOpen] = useState(true);
@@ -95,12 +104,12 @@ export default function MailApp({ email, build }: { email: string; build: string
 
   const loadFolders = useCallback(async () => {
     try {
-      const r = await api<{ folders: Folder[] }>("/api/folders");
+      const r = await api<{ folders: Folder[] }>(box("/api/folders"));
       setFolders(r.folders);
     } catch (e) {
       flash((e as Error).message, "error");
     }
-  }, [flash]);
+  }, [flash, box]);
 
   const loadList = useCallback(
     async (opts?: { quiet?: boolean }) => {
@@ -111,7 +120,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         if (activeQuery) p.set("q", activeQuery);
         if (unreadOnly) p.set("unread", "1");
         if (role === "drafts" || !grouping) p.set("group", "0");
-        const r = await api<ListResp>(`/api/messages?${p}`);
+        const r = await api<ListResp>(box(`/api/messages?${p}`));
         setRows(r.messages);
         setTotal(r.total);
         setPageSize(r.pageSize);
@@ -121,12 +130,67 @@ export default function MailApp({ email, build }: { email: string; build: string
         setLoading(false);
       }
     },
-    [folder, page, activeQuery, unreadOnly, role, grouping],
+    [folder, page, activeQuery, unreadOnly, role, grouping, box],
   );
 
   useEffect(() => {
     loadFolders();
   }, [loadFolders]);
+
+  useEffect(() => {
+    api<{ shared: SharedBox[] }>("/api/shared").then((r) => setShared(r.shared)).catch(() => null);
+  }, []);
+
+  // Live team status for the open shared mailbox: who is replying, who replied.
+  useEffect(() => {
+    setTeam({ replying: [], replied: [] });
+    if (!mbox) return;
+    const es = new EventSource(`/api/presence/stream?mbox=${encodeURIComponent(mbox)}`);
+    es.onmessage = (e) => {
+      try {
+        setTeam(JSON.parse(e.data));
+      } catch {
+        /* ignore a bad frame */
+      }
+    };
+    return () => es.close();
+  }, [mbox]);
+
+  // While a reply from a shared mailbox is open, tell teammates (kept alive every 20 s).
+  const presenceKey = draft?.from && draft.threadKey ? `${draft.from}|${draft.threadKey}` : "";
+  useEffect(() => {
+    if (!presenceKey) return;
+    const [from, thread] = presenceKey.split("|");
+    const send = (state: string) =>
+      api(`/api/presence?mbox=${encodeURIComponent(from)}`, { method: "POST", body: JSON.stringify({ thread, state }) }).catch(() => null);
+    send("start");
+    const id = window.setInterval(() => send("beat"), 20_000);
+    return () => {
+      window.clearInterval(id);
+      send("stop");
+    };
+  }, [presenceKey]);
+
+  function switchMailbox(addr: string | null) {
+    setMbox(addr);
+    setFolder("INBOX");
+    setFolders([]);
+    setPage(1);
+    setSelected(null);
+    setMessage(null);
+    setChecked(new Set());
+    setNotReplied(false);
+    setDrawer(false);
+  }
+
+  const canSend = !sharedBox || sharedBox.access !== "read";
+  const fromOptions: FromOption[] = [
+    { address: email, label: email },
+    ...shared.filter((x) => x.access !== "read").map((x) => ({ address: x.address, label: `${x.name} <${x.address}>` })),
+  ];
+  function compose(d: Draft) {
+    setDraft(sharedBox && canSend ? { ...d, from: sharedBox.address, threadKey: d.replyToUid ? selectedKey : undefined } : d);
+  }
 
   // /mail?compose=address opens a new email to that address (from Contacts).
   useEffect(() => {
@@ -147,7 +211,7 @@ export default function MailApp({ email, build }: { email: string; build: string
     const tick = async () => {
       if (document.hidden) return;
       try {
-        const s = await api<{ uidNext: number; unseen: number }>(`/api/poll?folder=${encodeURIComponent(folder)}`);
+        const s = await api<{ uidNext: number; unseen: number }>(box(`/api/poll?folder=${encodeURIComponent(folder)}`));
         if (uidNextRef.current && s.uidNext !== uidNextRef.current) {
           loadList({ quiet: true });
           loadFolders();
@@ -169,9 +233,9 @@ export default function MailApp({ email, build }: { email: string; build: string
       try {
         const row = rows.find((r) => r.uid === uid);
         const also = (row?.uids || []).filter((u) => u !== uid);
-        const t = await api<Thread>(
-          `/api/thread/${uid}?folder=${encodeURIComponent(folder)}${also.length ? `&also=${also.join(",")}` : ""}`,
-        );
+        const t = await api<Thread>(box(`/api/thread/${uid}?folder=${encodeURIComponent(folder)}${also.length ? `&also=${also.join(",")}` : ""}`));
+        if (mbox) t.messages = t.messages.map((x) => ({ ...x, attachments: x.attachments.map((a) => ({ ...a, url: `${a.url}&mbox=${encodeURIComponent(mbox)}` })) }));
+        setSelectedKey(row?.key);
         const m = t.messages.find((x) => x.uid === t.opened.uid && x.folder === t.opened.folder) || t.messages[0];
         setThread(t.messages);
         setMessage(m);
@@ -179,7 +243,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         // Opening a conversation reads all of it, like Outlook.
         const unreadOthers = t.messages.filter((x) => x.folder === folder && x.unread && x.uid !== uid).map((x) => x.uid);
         if (unreadOthers.length)
-          api("/api/actions", { method: "POST", body: JSON.stringify({ folder, uids: unreadOthers, action: "read" }) })
+          api(box("/api/actions"), { method: "POST", body: JSON.stringify({ folder, uids: unreadOthers, action: "read" }) })
             .then(() => loadFolders())
             .catch(() => null);
         setFolders((fs) =>
@@ -192,7 +256,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         setMessageLoading(false);
       }
     },
-    [folder, rows, flash, loadFolders],
+    [folder, rows, flash, loadFolders, box, mbox],
   );
 
   const act = useCallback(
@@ -202,7 +266,7 @@ export default function MailApp({ email, build }: { email: string; build: string
       if (!uids.length) return;
       const hit = (r: MessageRow) => (r.uids ?? [r.uid]).some((u) => uids.includes(u));
       try {
-        const r = await api<{ moved: string | null; deleted: boolean }>("/api/actions", {
+        const r = await api<{ moved: string | null; deleted: boolean }>(box("/api/actions"), {
           method: "POST",
           body: JSON.stringify({ folder, uids, action, target }),
         });
@@ -231,7 +295,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         flash((e as Error).message, "error");
       }
     },
-    [folder, selected, message, flash, loadFolders, rows],
+    [folder, selected, message, flash, loadFolders, rows, box],
   );
 
   function switchFolder(path: string) {
@@ -295,6 +359,22 @@ export default function MailApp({ email, build }: { email: string; build: string
     document.title = inboxUnseen ? `(${inboxUnseen}) MailTide` : "MailTide";
   }, [inboxUnseen]);
 
+  const nowMs = Date.now();
+  const teamStatus = (key?: string, answered?: boolean): { text: string; tone: "open" | "done" | "busy" } | null => {
+    if (!sharedBox || !key) return null;
+    const busy = team.replying.filter((r) => r.thread === key);
+    if (busy.length) return { text: `${busy.map((b) => (b.member === email ? "You" : b.name)).join(", ")} ${busy.length === 1 && busy[0].member !== email ? "is" : "are"} replying now`, tone: "busy" };
+    const done = team.replied.find((r) => r.thread === key);
+    if (done) {
+      const mins = Math.round((nowMs - new Date(done.at || "").getTime()) / 60000);
+      return { text: `Replied by ${done.member === email ? "you" : done.name}${mins < 1 ? ", just now" : `, ${shortDate(done.at || "")}`}`, tone: "done" };
+    }
+    if (answered) return { text: "Replied", tone: "done" };
+    return { text: "Not replied yet", tone: "open" };
+  };
+  const visibleRows = notReplied ? rows.filter((r) => teamStatus(r.key, r.answered)?.tone === "open") : rows;
+  const othersReplying = sharedBox && selectedKey ? team.replying.filter((r) => r.thread === selectedKey && r.member !== email) : [];
+
   const targets = checked.size ? [...checked] : selected ? [selected] : [];
   const targetRows = rows.filter((r) => targets.includes(r.uid));
   const allTargetsRead = targetRows.length > 0 && targetRows.every((r) => r.seen);
@@ -304,7 +384,7 @@ export default function MailApp({ email, build }: { email: string; build: string
 
   // Rows grouped by day, like Outlook (Today, Yesterday, This week...).
   const groups: { label: string; rows: MessageRow[] }[] = [];
-  for (const r of rows) {
+  for (const r of visibleRows) {
     const label = dateGroup(r.date);
     const g = groups[groups.length - 1];
     if (g && g.label === label) g.rows.push(r);
@@ -386,7 +466,7 @@ export default function MailApp({ email, build }: { email: string; build: string
           {tab === "Home" && (
             <>
               <div className="relative flex flex-none">
-                <button onClick={() => setDraft({})} className="flex h-[34px] items-center gap-1.5 rounded-l-lg bg-orange pl-3 pr-2.5 text-[13.5px] font-semibold text-white hover:bg-orange-press">
+                <button onClick={() => compose({})} className="flex h-[34px] items-center gap-1.5 rounded-l-lg bg-orange pl-3 pr-2.5 text-[13.5px] font-semibold text-white hover:bg-orange-press">
                   <Pen size={16} /> New email
                 </button>
                 <button
@@ -431,13 +511,13 @@ export default function MailApp({ email, build }: { email: string; build: string
                 </select>
               </span>
               <Sep />
-              <RibbonBtn disabled={!message} onClick={() => message && setDraft(replyDraft(latestFromOthers(), email, false))} icon={<Reply size={17} />}>
+              <RibbonBtn disabled={!message} onClick={() => message && compose(replyDraft(latestFromOthers(), email, false))} icon={<Reply size={17} />}>
                 Reply
               </RibbonBtn>
-              <RibbonBtn disabled={!message} onClick={() => message && setDraft(replyDraft(latestFromOthers(), email, true))} icon={<ReplyAll size={17} />}>
+              <RibbonBtn disabled={!message} onClick={() => message && compose(replyDraft(latestFromOthers(), email, true))} icon={<ReplyAll size={17} />}>
                 Reply all
               </RibbonBtn>
-              <RibbonBtn disabled={!message} onClick={() => message && setDraft(forwardDraft(message))} icon={<Forward size={17} />}>
+              <RibbonBtn disabled={!message} onClick={() => message && compose(forwardDraft(message))} icon={<Forward size={17} />}>
                 Forward
               </RibbonBtn>
               <Sep />
@@ -495,10 +575,31 @@ export default function MailApp({ email, build }: { email: string; build: string
             <Menu size={18} />
           </button>
           {folders.length === 0 && <span className="px-3 py-2 text-[13px] text-muted">Loading folders...</span>}
-          {favorites.length > 0 && section("Favorites", favOpen, () => setFavOpen((v) => !v))}
-          {favOpen && favorites.map((f) => folderButton(f, `fav:${f.path}`))}
-          {folders.length > 0 && section(email, acctOpen, () => setAcctOpen((v) => !v))}
-          {acctOpen && folders.map((f) => folderButton(f, f.path))}
+          {!mbox && favorites.length > 0 && section("Favorites", favOpen, () => setFavOpen((v) => !v))}
+          {!mbox && favOpen && favorites.map((f) => folderButton(f, `fav:${f.path}`))}
+          {section(email, !mbox && acctOpen, () => (mbox ? switchMailbox(null) : setAcctOpen((v) => !v)))}
+          {!mbox && acctOpen && folders.map((f) => folderButton(f, f.path))}
+          {shared.map((x) => {
+            const on = mbox === x.address;
+            return (
+              <div key={x.address}>
+                <button onClick={() => (on ? null : switchMailbox(x.address))} aria-expanded={on} className="flex w-full items-center gap-1.5 px-2 pb-1 pt-3.5 text-left text-[13px] font-semibold text-ink-soft">
+                  {on ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span className="flex-1 truncate">{x.name}</span>
+                  <span className="rounded-[5px] bg-[#DDE7F3] px-1.5 text-[11px] font-semibold text-[#2F5B8A]">Shared</span>
+                </button>
+                {on && (
+                  <>
+                    <span className="block truncate pb-1.5 pl-7 pr-3 text-xs text-muted">{x.address}</span>
+                    {folders.map((f) => folderButton(f, `${x.address}:${f.path}`))}
+                    <div className="mx-1.5 mt-3.5 rounded-[10px] border border-line bg-paper px-3 py-2.5 text-[12.5px] leading-snug text-ink-soft">
+                      Your access: <b>{x.access === "full" ? "Full" : x.access === "sendas" ? "Send as" : "Read"}</b>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </nav>
         {!paneOpen && (
           <button onClick={() => setPaneOpen(true)} aria-label="Show folders" className="ml-1 hidden h-9 w-9 flex-none items-center justify-center rounded-lg hover:bg-white/70 lg:flex">
@@ -523,21 +624,29 @@ export default function MailApp({ email, build }: { email: string; build: string
               <span className="flex-1 truncate px-1 text-sm font-semibold">{checked.size} selected</span>
             ) : (
               <>
-                {[
-                  ["All", false],
-                  ["Unread", true],
-                ].map(([label, val]) => (
-                  <button
-                    key={String(label)}
-                    onClick={() => {
-                      setUnreadOnly(val as boolean);
-                      setPage(1);
-                    }}
-                    className={`px-2 py-1.5 text-[14.5px] ${unreadOnly === val ? "font-semibold shadow-[inset_0_-2px_0_#E8693A]" : "text-muted hover:text-ink"}`}
-                  >
-                    {label as string}
-                  </button>
-                ))}
+                {sharedBox && <b className="mr-1 truncate font-head text-[15px] font-semibold">{sharedBox.name}</b>}
+                {(
+                  [
+                    ["All", false, false],
+                    ["Unread", true, false],
+                    ...(sharedBox ? [["Not replied", false, true]] : []),
+                  ] as [string, boolean, boolean][]
+                ).map(([label, val, nr]) => {
+                  const on = nr ? notReplied : !notReplied && unreadOnly === val;
+                  return (
+                    <button
+                      key={label}
+                      onClick={() => {
+                        setUnreadOnly(val);
+                        setNotReplied(nr);
+                        setPage(1);
+                      }}
+                      className={`whitespace-nowrap px-2 py-1.5 text-[14.5px] ${on ? "font-semibold shadow-[inset_0_-2px_0_#E8693A]" : "text-muted hover:text-ink"}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
                 <span className="flex-1 truncate pl-2 text-right text-[12.5px] text-muted">
                   {title} · {total}
                 </span>
@@ -656,6 +765,12 @@ export default function MailApp({ email, build }: { email: string; build: string
                                 <span className={`flex-1 truncate text-[13.5px] ${m.seen ? "font-normal text-ink" : "font-semibold text-orange-text"}`}>{m.subject}</span>
                                 <span className="flex-none text-[12.5px] text-muted">{shortDate(m.date)}</span>
                               </div>
+                              {(() => {
+                                const st = teamStatus(m.key, m.answered);
+                                if (!st) return null;
+                                const tone = st.tone === "done" ? "bg-[#E4F0E6] text-[#2C6B3A]" : st.tone === "busy" ? "bg-[#DDE7F3] text-[#2F5B8A]" : "bg-orange-soft text-orange-text";
+                                return <span className={`order-last w-fit rounded-[5px] px-1.5 text-[11.5px] font-semibold leading-[18px] ${tone}`}>{st.text}</span>;
+                              })()}
                               <div className="flex items-center gap-2">
                                 <span className="flex-1 truncate text-[13px] text-muted">{m.snippet}</span>
                                 <button
@@ -718,7 +833,15 @@ export default function MailApp({ email, build }: { email: string; build: string
               setMessage(null);
             }}
             onAction={(a, target) => message && act(a, [message.uid], target)}
-            onCompose={(d) => setDraft(d)}
+            onCompose={compose}
+            shared={sharedBox ? { name: sharedBox.name, address: sharedBox.address, canSend } : null}
+            othersReplying={othersReplying.map((r) => ({ name: r.name, since: r.started_at || "" }))}
+            sendQuery={sharedBox && canSend ? `?mbox=${encodeURIComponent(sharedBox.address)}` : ""}
+            threadKey={selectedKey}
+            onReplying={() => {
+              if (sharedBox && canSend && selectedKey)
+                api(`/api/presence?mbox=${encodeURIComponent(sharedBox.address)}`, { method: "POST", body: JSON.stringify({ thread: selectedKey, state: "start" }) }).catch(() => null);
+            }}
             onSent={() => {
               flash("Sent");
               loadFolders();
@@ -731,6 +854,7 @@ export default function MailApp({ email, build }: { email: string; build: string
       {draft && (
         <Composer
           initial={draft}
+          fromOptions={fromOptions}
           onClose={() => setDraft(null)}
           onDone={(mode) => {
             setDraft(null);
@@ -759,7 +883,7 @@ export default function MailApp({ email, build }: { email: string; build: string
 
   async function openDraft(uid: number) {
     try {
-      const m = await api<FullMessage>(`/api/messages/${uid}?folder=${encodeURIComponent(folder)}`);
+      const m = await api<FullMessage>(box(`/api/messages/${uid}?folder=${encodeURIComponent(folder)}`));
       setDraft({
         to: m.to.map((a) => a.address).join(", "),
         cc: m.cc.map((a) => a.address).join(", "),

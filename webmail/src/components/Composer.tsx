@@ -15,7 +15,13 @@ export type Draft = {
   replyFolder?: string;
   draftUid?: number;
   forwardAttachments?: Attachment[];
+  /** Send from this address (a shared mailbox the person may send as). */
+  from?: string;
+  /** Conversation key, so a shared mailbox can show who replied. */
+  threadKey?: string;
 };
+
+export type FromOption = { address: string; label: string };
 
 type FileItem = { filename: string; contentType: string; size: number; data: string };
 
@@ -28,7 +34,18 @@ function toBase64(buf: ArrayBuffer): string {
   return btoa(bin);
 }
 
-export default function Composer({ initial, onClose, onDone }: { initial: Draft; onClose: () => void; onDone: (mode: "send" | "draft") => void }) {
+export default function Composer({
+  initial,
+  onClose,
+  onDone,
+  fromOptions = [],
+}: {
+  initial: Draft;
+  onClose: () => void;
+  onDone: (mode: "send" | "draft") => void;
+  fromOptions?: FromOption[];
+}) {
+  const [from, setFrom] = useState(initial.from || fromOptions[0]?.address || "");
   const [to, setTo] = useState(initial.to ?? "");
   const [cc, setCc] = useState(initial.cc ?? "");
   const [bcc, setBcc] = useState(initial.bcc ?? "");
@@ -94,7 +111,8 @@ export default function Composer({ initial, onClose, onDone }: { initial: Draft;
     if (mode === "send" && !subject.trim() && !window.confirm("Send without a subject?")) return;
     setBusy(mode);
     try {
-      await api("/api/send", {
+      const own = !from || from === fromOptions[0]?.address;
+      await api(own ? "/api/send" : `/api/send?mbox=${encodeURIComponent(from)}`, {
         method: "POST",
         body: JSON.stringify({
           mode,
@@ -108,6 +126,7 @@ export default function Composer({ initial, onClose, onDone }: { initial: Draft;
           replyToUid: initial.replyToUid,
           replyFolder: initial.replyFolder,
           draftUid: initial.draftUid,
+          threadKey: own ? undefined : initial.threadKey,
           attachments: files.map(({ filename, contentType, data }) => ({ filename, contentType, data })),
         }),
       });
@@ -142,6 +161,18 @@ export default function Composer({ initial, onClose, onDone }: { initial: Draft;
           </button>
         </div>
         <div className="flex flex-col border-b border-line px-4">
+          {fromOptions.length > 1 && (
+            <div className="flex items-center gap-2 border-b border-line-faint py-1.5">
+              <label htmlFor="mt-from" className="w-12 text-[13px] text-muted">From</label>
+              <select id="mt-from" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 min-w-0 flex-1 rounded-lg border border-line-strong bg-white px-2 text-[13.5px]">
+                {fromOptions.map((o) => (
+                  <option key={o.address} value={o.address}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex items-center gap-2 border-b border-line-faint">
             <label htmlFor="mt-to" className="w-12 text-[13px] text-muted">To</label>
             <input id="mt-to" ref={toRef} className={field} value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@company.com, ..." autoComplete="email" />

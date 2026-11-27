@@ -19,7 +19,8 @@ export function authed<A extends unknown[]>(fn: (user: User, ...args: A) => Prom
     try {
       return await fn(user, ...args);
     } catch (e) {
-      const err = e as { authenticationFailed?: boolean; message?: string; responseText?: string };
+      const err = e as { authenticationFailed?: boolean; message?: string; responseText?: string; status?: number };
+      if (err.status === 403) return fail(err.message || "Not allowed.", 403);
       if (err.authenticationFailed) return fail("Your password was changed. Please sign in again.", 401);
       console.error("[mailtide]", err.message, err.responseText ?? "");
       return fail("The mail server did not answer. Please try again.", 502);

@@ -1,3 +1,4 @@
+import { boxFor } from "@/lib/shared";
 import { simpleParser } from "mailparser";
 import type { FetchMessageObject, MessageAddressObject } from "imapflow";
 import { authed, json } from "@/lib/http";
@@ -19,6 +20,7 @@ function hasAttachments(node: FetchMessageObject["bodyStructure"]): boolean {
 }
 
 export const GET = authed(async (user, req: Request) => {
+  const box = await boxFor(user, req, "read");
   const url = new URL(req.url);
   const folder = url.searchParams.get("folder") || "INBOX";
   const page = Math.max(1, Number(url.searchParams.get("page") || 1));
@@ -27,7 +29,7 @@ export const GET = authed(async (user, req: Request) => {
   // Drafts are listed one by one; everything else folds into conversations.
   const grouped = url.searchParams.get("group") !== "0";
 
-  const result = await withFolder(user, folder, async (c) => {
+  const result = await withFolder(box, folder, async (c) => {
     const exists = typeof c.mailbox === "object" ? c.mailbox.exists : 0;
     let uids: number[];
     if (q || unreadOnly) {
@@ -80,7 +82,12 @@ export const GET = authed(async (user, req: Request) => {
     return {
       total,
       exists,
-      messages: list.map(({ messageId: _m, inReplyTo: _r, members, ...r }) => ({ ...r, members: members.length > 1 ? members.map(slim) : undefined })),
+      messages: list.map(({ messageId: _m, inReplyTo: _r, members, ...r }) => ({
+        ...r,
+        // A stable key for the conversation: its oldest email in this folder.
+        key: `${folder}:${Math.min(...r.uids)}`,
+        members: members.length > 1 ? members.map(slim) : undefined,
+      })),
     };
   });
 

@@ -15,6 +15,7 @@ export type MessageRow = {
   /** Every email in this conversation row (newest first) and how many. */
   uids?: number[];
   count?: number;
+  key?: string;
   members?: { uid: number; from: Address[]; date: string; seen: boolean; snippet: string; subject: string }[];
 };
 export type Attachment = { index: number; filename: string; contentType: string; size: number; url: string };

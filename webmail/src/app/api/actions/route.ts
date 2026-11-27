@@ -1,3 +1,4 @@
+import { boxFor } from "@/lib/shared";
 import { z } from "zod";
 import { authed, fail, json } from "@/lib/http";
 import { withFolder, withImap } from "@/lib/imap";
@@ -12,6 +13,7 @@ const Body = z.object({
 });
 
 export const POST = authed(async (user, req: Request) => {
+  const box = await boxFor(user, req, (await req.clone().json().catch(() => ({})))?.action === "trash" ? "full" : "read");
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("That action is not valid.");
   const { folder, uids, action, target } = parsed.data;
@@ -20,7 +22,7 @@ export const POST = authed(async (user, req: Request) => {
   // Work out where a move should go before locking the folder.
   let dest: string | null = null;
   if (["archive", "trash", "spam", "notspam", "move"].includes(action)) {
-    dest = await withImap(user, async (c) => {
+    dest = await withImap(box, async (c) => {
       if (action === "move") return target ?? null;
       if (action === "notspam") return "INBOX";
       const list = await c.list();
@@ -32,7 +34,7 @@ export const POST = authed(async (user, req: Request) => {
     if (!dest) return fail("Choose a folder to move to.");
   }
 
-  await withFolder(user, folder, async (c) => {
+  await withFolder(box, folder, async (c) => {
     switch (action) {
       case "read":
         await c.messageFlagsAdd(set, ["\\Seen"], { uid: true });
