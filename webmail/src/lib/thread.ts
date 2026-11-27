@@ -95,7 +95,7 @@ export type ListRow = {
  * say "Invoice" stay apart). The newest row leads; the group is unread if any
  * member is unread.
  */
-export function groupRows<T extends ListRow>(rows: T[]): Array<T & { uids: number[]; count: number }> {
+export function groupRows<T extends ListRow>(rows: T[]): Array<T & { uids: number[]; count: number; members: T[] }> {
   const parent = rows.map((_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   const join = (a: number, b: number) => {
@@ -126,7 +126,7 @@ export function groupRows<T extends ListRow>(rows: T[]): Array<T & { uids: numbe
     const g = find(i);
     groups.set(g, [...(groups.get(g) || []), r]);
   });
-  const out: Array<T & { uids: number[]; count: number }> = [];
+  const out: Array<T & { uids: number[]; count: number; members: T[] }> = [];
   for (const members of groups.values()) {
     members.sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || b.uid - a.uid);
     const lead = members[0];
@@ -137,6 +137,7 @@ export function groupRows<T extends ListRow>(rows: T[]): Array<T & { uids: numbe
       attachments: members.some((m) => m.attachments),
       uids: members.map((m) => m.uid),
       count: members.length,
+      members,
     });
   }
   return out.sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || b.uid - a.uid);

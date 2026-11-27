@@ -5,6 +5,13 @@ export const config = {
   smtpHost: process.env.SMTP_HOST || process.env.IMAP_HOST || "mx.sentire.solutions",
   smtpPort: Number(process.env.SMTP_PORT || 587),
   domainHint: process.env.MAIL_DOMAIN_HINT || "",
+  // Until accounts and roles live in Sentire Cloud (P3A), these addresses are the org admins.
+  adminEmails: (process.env.ADMIN_EMAILS || "crcanlubo@sentire.solutions")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+  // Organization names by mail domain, shown in the account menu (Sentire Cloud supplies this later).
+  orgNames: { "sentire.solutions": "Sentire Solutions", "mcrctas.com": "MCRC Tax and Accounting Services" } as Record<string, string>,
 };
 
 export function sessionSecret(): string {
@@ -17,4 +24,8 @@ export function sessionSecret(): string {
 }
 
 /** The build shown in the app and in /api/health (raise it with each release). */
-export const BUILD = "0.3.0";
+export const BUILD = "0.4.0";
+
+export function isAdmin(email: string): boolean {
+  return config.adminEmails.includes(email.toLowerCase());
+}

@@ -126,7 +126,7 @@ export default function Reader({ message: m, thread, loading, role, folders, onB
   const btn = "flex h-9 items-center gap-1.5 rounded-[9px] border border-line bg-white px-3 text-[13px] font-medium text-ink hover:bg-bg";
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="scroll-thin flex items-center gap-1.5 overflow-x-auto border-b border-line bg-white px-3 py-3 md:flex-wrap md:px-6">
+      <div className="scroll-thin flex items-center gap-1.5 overflow-x-auto border-b border-line bg-white px-3 py-3 md:hidden">
         <button onClick={onBack} aria-label="Back to list" className="rounded-lg p-2 text-ink hover:bg-bg md:hidden">
           <Back />
         </button>

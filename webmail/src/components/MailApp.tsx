@@ -1,18 +1,39 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   avatarColors,
+  dateGroup,
   displayName,
   initials,
   shortDate,
   type Folder,
-  type FullMessage, Thread,
+  type FullMessage,
+  type Thread,
   type MessageRow,
 } from "@/lib/client";
-import { Brand } from "./Logo";
-import { Clip, Close, Logout, Menu, Plus, Refresh, RoleIcon, Search, Star } from "./Icons";
-import Reader from "./Reader";
+import {
+  Archive,
+  Calendar as CalendarIcon,
+  ChevronDown,
+  ChevronRight,
+  Clip,
+  EnvelopeOpen,
+  Folder as FolderIcon,
+  Forward,
+  Mail,
+  Menu,
+  Pen,
+  Refresh,
+  Reply,
+  ReplyAll,
+  RoleIcon,
+  Spam,
+  Star,
+  Trash,
+} from "./Icons";
+import { Shell } from "./Shell";
+import Reader, { forwardDraft, replyDraft } from "./Reader";
 import Composer, { type Draft } from "./Composer";
 
 type ListResp = { total: number; page: number; pageSize: number; messages: MessageRow[] };
@@ -38,6 +59,29 @@ export default function MailApp({ email, build }: { email: string; build: string
   const [draft, setDraft] = useState<Draft | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [drawer, setDrawer] = useState(false);
+  const [tab, setTab] = useState<"Home" | "View" | "Help">("Home");
+  const [newMenu, setNewMenu] = useState(false);
+  const [paneOpen, setPaneOpen] = useState(true);
+  const [favOpen, setFavOpen] = useState(true);
+  const [acctOpen, setAcctOpen] = useState(true);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [closedGroups, setClosedGroups] = useState<Set<string>>(new Set());
+  const [grouping, setGroupingState] = useState(true);
+  useEffect(() => {
+    try {
+      setGroupingState(localStorage.getItem("mt.grouping") !== "0");
+    } catch {
+      /* storage can be blocked; keep the default */
+    }
+  }, []);
+  const setGrouping = (v: boolean) => {
+    setGroupingState(v);
+    try {
+      localStorage.setItem("mt.grouping", v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  };
   const searchRef = useRef<HTMLInputElement>(null);
   const uidNextRef = useRef<number>(0);
 
@@ -66,7 +110,7 @@ export default function MailApp({ email, build }: { email: string; build: string
         const p = new URLSearchParams({ folder, page: String(page) });
         if (activeQuery) p.set("q", activeQuery);
         if (unreadOnly) p.set("unread", "1");
-        if (role === "drafts") p.set("group", "0");
+        if (role === "drafts" || !grouping) p.set("group", "0");
         const r = await api<ListResp>(`/api/messages?${p}`);
         setRows(r.messages);
         setTotal(r.total);
@@ -77,12 +121,21 @@ export default function MailApp({ email, build }: { email: string; build: string
         setLoading(false);
       }
     },
-    [folder, page, activeQuery, unreadOnly, role],
+    [folder, page, activeQuery, unreadOnly, role, grouping],
   );
 
   useEffect(() => {
     loadFolders();
   }, [loadFolders]);
+
+  // /mail?compose=address opens a new email to that address (from Contacts).
+  useEffect(() => {
+    const to = new URLSearchParams(window.location.search).get("compose");
+    if (to) {
+      setDraft({ to });
+      window.history.replaceState(null, "", "/mail");
+    }
+  }, []);
 
   useEffect(() => {
     loadList();
@@ -109,7 +162,7 @@ export default function MailApp({ email, build }: { email: string; build: string
     return () => window.clearInterval(id);
   }, [folder, loadList, loadFolders]);
 
-  const open = useCallback(
+  const open_ = useCallback(
     async (uid: number) => {
       setSelected(uid);
       setMessageLoading(true);
@@ -198,11 +251,6 @@ export default function MailApp({ email, build }: { email: string; build: string
     setActiveQuery(query.trim());
   }
 
-  async function logout() {
-    await api("/api/auth/logout", { method: "POST" }).catch(() => null);
-    window.location.href = "/login";
-  }
-
   // Keyboard shortcuts: c compose, / or Ctrl/Cmd+K search, e archive, # delete, j/k move.
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
@@ -228,7 +276,7 @@ export default function MailApp({ email, build }: { email: string; build: string
       } else if (ev.key === "j" || ev.key === "k") {
         const i = rows.findIndex((r) => r.uid === selected);
         const next = rows[ev.key === "j" ? i + 1 : Math.max(0, i - 1)];
-        if (next) open(next.uid);
+        if (next) open_(next.uid);
       } else if (ev.key === "Escape" && selected) {
         setSelected(null);
         setMessage(null);
@@ -236,277 +284,449 @@ export default function MailApp({ email, build }: { email: string; build: string
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rows, selected, draft, act, open]);
+  }, [rows, selected, draft, act, open_]);
 
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const inboxUnseen = folders.find((f) => f.role === "inbox")?.unseen ?? 0;
   const allChecked = rows.length > 0 && rows.every((r) => checked.has(r.uid));
   const title = activeQuery ? `Results for "${activeQuery}"` : current?.name ?? "Inbox";
-  const me = useMemo(() => ({ name: "", address: email }), [email]);
 
   useEffect(() => {
     document.title = inboxUnseen ? `(${inboxUnseen}) MailTide` : "MailTide";
   }, [inboxUnseen]);
 
-  return (
-    <div className="flex h-[100dvh] overflow-hidden">
-      {/* Sidebar */}
-      {drawer && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setDrawer(false)} />}
-      <nav
-        aria-label="Mailboxes"
-        className={`espresso fixed inset-y-0 left-0 z-40 flex w-[256px] flex-col gap-3.5 px-3.5 pb-3.5 pt-[18px] text-espresso-text transition-transform lg:static lg:translate-x-0 ${
-          drawer ? "translate-x-0" : "-translate-x-full"
-        }`}
+  const targets = checked.size ? [...checked] : selected ? [selected] : [];
+  const targetRows = rows.filter((r) => targets.includes(r.uid));
+  const allTargetsRead = targetRows.length > 0 && targetRows.every((r) => r.seen);
+  const allTargetsStarred = targetRows.length > 0 && targetRows.every((r) => r.flagged);
+  const moveTargets = folders.filter((f) => f.path !== folder);
+  const favorites = (["inbox", "sent", "drafts"] as const).map((r) => folders.find((f) => f.role === r)).filter(Boolean) as Folder[];
+
+  // Rows grouped by day, like Outlook (Today, Yesterday, This week...).
+  const groups: { label: string; rows: MessageRow[] }[] = [];
+  for (const r of rows) {
+    const label = dateGroup(r.date);
+    const g = groups[groups.length - 1];
+    if (g && g.label === label) g.rows.push(r);
+    else groups.push({ label, rows: [r] });
+  }
+
+  const folderButton = (f: Folder, key: string) => {
+    const on = f.path === folder && !activeQuery;
+    const showCount = f.unseen > 0 && f.role !== "sent" && f.role !== "trash" && f.role !== "drafts";
+    return (
+      <button
+        key={key}
+        onClick={() => switchFolder(f.path)}
+        className={`flex h-9 w-full items-center gap-2.5 rounded-lg pl-3.5 pr-3 text-left text-sm ${on ? "bg-[#FBF3EE] font-semibold shadow-[inset_3px_0_0_#E8693A]" : "hover:bg-white/70"}`}
       >
-        <Brand />
-        <button
-          onClick={() => {
-            setDraft({});
-            setDrawer(false);
-          }}
-          className="flex h-11 items-center justify-center gap-2 rounded-xl bg-orange text-sm font-semibold text-white shadow-[0_6px_16px_-6px_rgba(232,105,58,.7)] hover:bg-orange-press"
-        >
-          <Plus size={17} /> New email
-        </button>
-        <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-          {folders.length === 0 && <span className="px-3 py-2 text-[13px] text-espresso-dim">Loading folders...</span>}
-          {folders.map((f) => {
-            const on = f.path === folder && !activeQuery;
-            return (
-              <button
-                key={f.path}
-                onClick={() => switchFolder(f.path)}
-                className={`flex items-center gap-2.5 rounded-[9px] px-3 py-[9px] text-left text-[13.5px] ${
-                  on ? "bg-[rgba(232,105,58,.18)] font-semibold text-white shadow-[inset_3px_0_0_#E8693A]" : "text-espresso-text hover:bg-white/5"
-                }`}
-                style={{ fontFamily: "inherit" }}
-              >
-                <span className={on ? "text-orange" : "text-espresso-label"}>
-                  <RoleIcon role={f.role} />
-                </span>
-                <span className="flex-1 truncate">{f.name}</span>
-                {f.unseen > 0 && f.role !== "sent" && f.role !== "trash" && (
-                  <span className={`text-xs font-semibold ${on ? "text-white" : "text-espresso-label"}`}>{f.unseen}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/[.06] px-[11px] py-[9px]">
-          <div className="flex h-8 w-8 flex-none items-center justify-center rounded-[9px] bg-orange font-head text-[13px] font-bold text-white">
-            {initials(me)}
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col leading-tight">
-            <b className="truncate text-[13px] font-semibold text-white">{displayName(me)}</b>
-            <span className="truncate text-[11px] text-espresso-dim">{email}</span>
-          </div>
-          <button onClick={logout} title="Sign out" aria-label="Sign out" className="rounded-md p-1.5 text-espresso-dim hover:bg-white/10 hover:text-white">
-            <Logout size={16} />
+        <span className="text-ink-soft">
+          <RoleIcon role={f.role} />
+        </span>
+        <span className="flex-1 truncate">{f.name}</span>
+        {showCount && <span className="text-[12.5px] font-bold text-orange-text">{f.unseen}</span>}
+      </button>
+    );
+  };
+
+  const section = (label: string, open: boolean, toggle: () => void) => (
+    <button onClick={toggle} aria-expanded={open} className="flex w-full items-center gap-1.5 px-2 pb-1.5 pt-3 text-left text-[13px] font-semibold text-ink-soft">
+      {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+
+  const settingsPanel = (
+    <label className="flex items-center justify-between gap-3">
+      <span>
+        <b className="block font-semibold">Group into conversations</b>
+        <span className="text-[12.5px] text-muted">Replies show as one row in the list</span>
+      </span>
+      <input type="checkbox" checked={grouping} onChange={(e) => setGrouping(e.target.checked)} className="h-4 w-4 accent-[#E8693A]" />
+    </label>
+  );
+
+  return (
+    <Shell
+      active="mail"
+      unread={inboxUnseen}
+      build={build}
+      settings={settingsPanel}
+      search={{
+        value: query,
+        onChange: setQuery,
+        onSubmit: () => runSearch(),
+        onClear: () => {
+          setQuery("");
+          setActiveQuery("");
+        },
+        inputRef: searchRef,
+        placeholder: "Search mail",
+      }}
+    >
+      {/* Ribbon */}
+      <div className="mx-2.5 mt-2 flex flex-none flex-col gap-0.5 rounded-xl border border-line bg-white px-2 pb-1.5 pt-1">
+        <div role="tablist" aria-label="Ribbon" className="flex gap-1 text-[13.5px]">
+          {(["Home", "View", "Help"] as const).map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+              className={`px-2.5 py-1.5 ${tab === t ? "font-semibold shadow-[inset_0_-2px_0_#E8693A]" : "text-muted hover:text-ink"}`}
+            >
+              {t}
+            </button>
+          ))}
+          <button onClick={() => setDrawer(true)} aria-label="Open folders" className="ml-auto rounded-lg px-2 text-ink lg:hidden">
+            <Menu size={18} />
           </button>
         </div>
-        <span className="px-1 text-[10.5px] text-espresso-label">MailTide {build}</span>
-      </nav>
-
-      {/* Message list */}
-      <section
-        aria-label="Message list"
-        className={`flex min-w-0 flex-1 flex-col border-r border-line bg-white md:max-w-[440px] md:flex-none md:basis-[400px] lg:basis-[420px] ${
-          selected ? "hidden md:flex" : "flex"
-        }`}
-      >
-        <div className="flex flex-col gap-3 px-4 pb-2.5 pt-4">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setDrawer(true)} aria-label="Open folders" className="rounded-lg p-2 text-ink hover:bg-bg lg:hidden">
-              <Menu />
-            </button>
-            <form onSubmit={runSearch} className="flex h-[42px] flex-1 items-center gap-2.5 rounded-[11px] border border-line bg-bg px-3 text-[13.5px] text-muted focus-within:border-orange">
-              <Search size={16} />
-              <label htmlFor="mt-search" className="sr-only">Search mail</label>
-              <input
-                id="mt-search"
-                ref={searchRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setQuery("");
-                    setActiveQuery("");
-                    (e.target as HTMLInputElement).blur();
-                  }
-                }}
-                placeholder="Search mail"
-                className="min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-muted"
-              />
-              {query ? (
-                <button type="button" aria-label="Clear search" onClick={() => { setQuery(""); setActiveQuery(""); }} className="text-muted hover:text-ink">
-                  <Close size={15} />
+        <div className="scroll-thin flex items-center gap-0.5 overflow-x-auto whitespace-nowrap">
+          {tab === "Home" && (
+            <>
+              <div className="relative flex flex-none">
+                <button onClick={() => setDraft({})} className="flex h-[34px] items-center gap-1.5 rounded-l-lg bg-orange pl-3 pr-2.5 text-[13.5px] font-semibold text-white hover:bg-orange-press">
+                  <Pen size={16} /> New email
                 </button>
-              ) : (
-                <span className="hidden rounded-md border border-line-strong bg-white px-1.5 py-0.5 font-head text-[11px] font-semibold sm:inline">⌘K</span>
+                <button
+                  aria-label="More new items"
+                  aria-expanded={newMenu}
+                  onClick={() => setNewMenu((v) => !v)}
+                  className="flex h-[34px] items-center rounded-r-lg border-l border-white/40 bg-orange px-2 text-white hover:bg-orange-press"
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
+              <Sep />
+              <RibbonBtn disabled={!targets.length} onClick={() => act("trash", targets)} icon={<Trash size={17} />}>
+                {role === "trash" ? "Delete for good" : "Delete"}
+              </RibbonBtn>
+              {role !== "archive" && (
+                <RibbonBtn disabled={!targets.length} onClick={() => act("archive", targets)} icon={<Archive size={17} />}>
+                  Archive
+                </RibbonBtn>
               )}
-            </form>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {[
-              ["All", false],
-              ["Unread", true],
-            ].map(([label, val]) => (
-              <button
-                key={String(label)}
-                onClick={() => { setUnreadOnly(val as boolean); setPage(1); }}
-                className={`h-8 rounded-full px-3 text-[12.5px] font-medium ${
-                  unreadOnly === val ? "border border-ink bg-ink text-white" : "border border-line-strong bg-white text-ink-soft hover:bg-bg"
-                }`}
-              >
-                {label as string}
+              <RibbonBtn disabled={!targets.length} onClick={() => act(role === "junk" ? "notspam" : "spam", targets)} icon={<Spam size={17} />}>
+                {role === "junk" ? "Not spam" : "Spam"}
+              </RibbonBtn>
+              <label className="sr-only" htmlFor="mt-move">
+                Move to folder
+              </label>
+              <span className="flex h-[34px] flex-none items-center gap-1.5 rounded-lg px-2 text-[13.5px] text-ink">
+                <FolderIcon size={17} />
+                <select
+                  id="mt-move"
+                  value=""
+                  disabled={!targets.length}
+                  onChange={(e) => e.target.value && act("move", targets, e.target.value)}
+                  className="bg-transparent text-[13.5px] outline-none disabled:opacity-40"
+                >
+                  <option value="">Move to</option>
+                  {moveTargets.map((f) => (
+                    <option key={f.path} value={f.path}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </span>
+              <Sep />
+              <RibbonBtn disabled={!message} onClick={() => message && setDraft(replyDraft(latestFromOthers(), email, false))} icon={<Reply size={17} />}>
+                Reply
+              </RibbonBtn>
+              <RibbonBtn disabled={!message} onClick={() => message && setDraft(replyDraft(latestFromOthers(), email, true))} icon={<ReplyAll size={17} />}>
+                Reply all
+              </RibbonBtn>
+              <RibbonBtn disabled={!message} onClick={() => message && setDraft(forwardDraft(message))} icon={<Forward size={17} />}>
+                Forward
+              </RibbonBtn>
+              <Sep />
+              <RibbonBtn disabled={!targets.length} onClick={() => act(allTargetsRead ? "unread" : "read", targets)} icon={<EnvelopeOpen size={17} />}>
+                {allTargetsRead ? "Mark unread" : "Mark read"}
+              </RibbonBtn>
+              <RibbonBtn disabled={!targets.length} onClick={() => act(allTargetsStarred ? "unflag" : "flag", targets)} icon={<Star size={17} filled={allTargetsStarred} />}>
+                {allTargetsStarred ? "Unstar" : "Star"}
+              </RibbonBtn>
+            </>
+          )}
+          {tab === "View" && (
+            <>
+              <RibbonBtn onClick={() => setPaneOpen((v) => !v)} icon={<Menu size={17} />}>
+                {paneOpen ? "Hide folder pane" : "Show folder pane"}
+              </RibbonBtn>
+              <RibbonBtn onClick={() => setGrouping(!grouping)} icon={<EnvelopeOpen size={17} />}>
+                {grouping ? "Show emails one by one" : "Group into conversations"}
+              </RibbonBtn>
+              <RibbonBtn onClick={() => { loadList(); loadFolders(); }} icon={<Refresh size={17} />}>
+                Refresh
+              </RibbonBtn>
+            </>
+          )}
+          {tab === "Help" && (
+            <span className="flex h-[34px] items-center px-2 text-[13px] text-ink-soft">
+              Shortcuts: c new email, / search, j and k next and previous, e archive, # delete. MailTide {build}
+            </span>
+          )}
+        </div>
+        {newMenu && (
+          <div className="relative">
+            <div className="absolute left-0 top-1 z-20 flex w-[200px] flex-col rounded-xl border border-line bg-white p-1.5 shadow-lg">
+              <button onClick={() => { setNewMenu(false); setDraft({}); }} className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm hover:bg-paper">
+                <Mail size={16} /> Email
               </button>
-            ))}
-            <div className="flex-1" />
+              <a href="/calendar?new=1" className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-ink no-underline hover:bg-paper">
+                <CalendarIcon size={16} /> Event
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-2 flex min-h-0 flex-1">
+        {/* Folder pane */}
+        {drawer && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setDrawer(false)} />}
+        <nav
+          aria-label="Folders"
+          className={`scroll-thin fixed inset-y-0 left-0 z-40 w-[248px] flex-col gap-0.5 overflow-y-auto bg-bg px-2 pb-3 pt-2 transition-transform lg:static lg:z-auto lg:w-[236px] lg:flex-none lg:translate-x-0 ${
+            drawer ? "flex translate-x-0" : "flex -translate-x-full"
+          } ${paneOpen ? "" : "lg:hidden"}`}
+        >
+          <button onClick={() => (drawer ? setDrawer(false) : setPaneOpen(false))} aria-label="Collapse folders" className="mb-1 ml-1 flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/70">
+            <Menu size={18} />
+          </button>
+          {folders.length === 0 && <span className="px-3 py-2 text-[13px] text-muted">Loading folders...</span>}
+          {favorites.length > 0 && section("Favorites", favOpen, () => setFavOpen((v) => !v))}
+          {favOpen && favorites.map((f) => folderButton(f, `fav:${f.path}`))}
+          {folders.length > 0 && section(email, acctOpen, () => setAcctOpen((v) => !v))}
+          {acctOpen && folders.map((f) => folderButton(f, f.path))}
+        </nav>
+        {!paneOpen && (
+          <button onClick={() => setPaneOpen(true)} aria-label="Show folders" className="ml-1 hidden h-9 w-9 flex-none items-center justify-center rounded-lg hover:bg-white/70 lg:flex">
+            <Menu size={18} />
+          </button>
+        )}
+
+        {/* Message list */}
+        <section
+          aria-label="Message list"
+          className={`flex min-w-0 flex-1 flex-col border-x border-line bg-white md:max-w-[440px] md:flex-none md:basis-[400px] ${selected ? "hidden md:flex" : "flex"}`}
+        >
+          <div className="flex items-center gap-1 px-3 pb-1.5 pt-2.5">
+            <input
+              type="checkbox"
+              aria-label="Select all"
+              checked={allChecked}
+              onChange={() => setChecked(allChecked ? new Set() : new Set(rows.map((r) => r.uid)))}
+              className="mx-1.5 h-4 w-4 accent-[#E8693A]"
+            />
+            {checked.size > 0 ? (
+              <span className="flex-1 truncate px-1 text-sm font-semibold">{checked.size} selected</span>
+            ) : (
+              <>
+                {[
+                  ["All", false],
+                  ["Unread", true],
+                ].map(([label, val]) => (
+                  <button
+                    key={String(label)}
+                    onClick={() => {
+                      setUnreadOnly(val as boolean);
+                      setPage(1);
+                    }}
+                    className={`px-2 py-1.5 text-[14.5px] ${unreadOnly === val ? "font-semibold shadow-[inset_0_-2px_0_#E8693A]" : "text-muted hover:text-ink"}`}
+                  >
+                    {label as string}
+                  </button>
+                ))}
+                <span className="flex-1 truncate pl-2 text-right text-[12.5px] text-muted">
+                  {title} · {total}
+                </span>
+              </>
+            )}
             <button onClick={() => { loadList(); loadFolders(); }} aria-label="Refresh" title="Refresh" className="rounded-lg p-2 text-muted hover:bg-bg hover:text-ink">
               <Refresh size={16} />
             </button>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2 border-y border-line-faint bg-paper px-4 py-2 text-[12.5px] text-muted">
-          <input
-            type="checkbox"
-            aria-label="Select all"
-            checked={allChecked}
-            onChange={() => setChecked(allChecked ? new Set() : new Set(rows.map((r) => r.uid)))}
-            className="h-4 w-4 accent-[#E8693A]"
-          />
-          {checked.size > 0 ? (
-            <div className="flex flex-1 flex-wrap items-center gap-1.5">
-              <span className="mr-1 font-semibold text-ink">{checked.size} selected</span>
-              {role !== "archive" && <BulkBtn onClick={() => act("archive", [...checked])}>Archive</BulkBtn>}
-              <BulkBtn onClick={() => act("trash", [...checked])}>{role === "trash" ? "Delete for good" : "Delete"}</BulkBtn>
-              <BulkBtn onClick={() => act("read", [...checked])}>Mark read</BulkBtn>
-              <BulkBtn onClick={() => act("unread", [...checked])}>Mark unread</BulkBtn>
-            </div>
-          ) : (
-            <span className="flex-1 truncate font-head font-semibold text-ink">
-              {title} <span className="font-normal text-muted">· {total}</span>
-            </span>
-          )}
-        </div>
-
-        <div className="scroll-thin flex-1 overflow-y-auto">
-          {loading && rows.length === 0 && <ListSkeleton />}
-          {listError && (
-            <div className="m-4 rounded-xl border border-orange-line bg-orange-soft p-3 text-[13px] text-orange-text">
-              {listError} <button className="ml-1 font-semibold underline" onClick={() => loadList()}>Try again</button>
-            </div>
-          )}
-          {!loading && !listError && rows.length === 0 && (
-            <div className="flex flex-col items-center gap-1 px-6 py-16 text-center">
-              <b className="font-head text-[15px]">{activeQuery ? "No emails match your search" : unreadOnly ? "You're all caught up" : "Nothing here yet"}</b>
-              <span className="text-[13px] text-muted">{activeQuery ? "Try other words, a name or an email address." : "New emails will show up here."}</span>
-            </div>
-          )}
-          {rows.map((m) => {
-            const who = role === "sent" || role === "drafts" ? m.to[0] : m.from[0];
-            const [bg, fg] = avatarColors(who?.address || "?");
-            const isSel = m.uid === selected;
-            return (
-              <div
-                key={m.uid}
-                className={`group flex cursor-pointer gap-3 border-t border-line-faint px-4 py-[13px] ${
-                  isSel ? "bg-[#FBF3EE] shadow-[inset_3px_0_0_#E8693A]" : "bg-white hover:bg-paper"
-                }`}
-                onClick={() => (role === "drafts" ? openDraft(m.uid) : open(m.uid))}
-              >
-                <div className="relative flex-none">
-                  <div
-                    className="flex h-[38px] w-[38px] items-center justify-center rounded-full font-head text-[13px] font-semibold group-hover:hidden"
-                    style={{ background: bg, color: fg, display: checked.has(m.uid) ? "none" : undefined }}
-                  >
-                    {initials(who)}
-                  </div>
-                  <label className={`h-[38px] w-[38px] items-center justify-center ${checked.has(m.uid) ? "flex" : "hidden group-hover:flex"}`} onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      aria-label="Select"
-                      checked={checked.has(m.uid)}
-                      onChange={() => {
-                        const n = new Set(checked);
-                        if (n.has(m.uid)) n.delete(m.uid);
-                        else n.add(m.uid);
-                        setChecked(n);
-                      }}
-                      className="h-4 w-4 accent-[#E8693A]"
-                    />
-                  </label>
-                </div>
-                <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                  <div className="flex items-baseline gap-2">
-                    {!m.seen && <span className="h-2 w-2 flex-none self-center rounded-full bg-orange" aria-label="Unread" />}
-                    <b className={`flex-1 truncate text-[13.5px] text-ink ${m.seen ? "font-normal" : "font-semibold"}`}>
-                      {role === "sent" || role === "drafts" ? `To: ${displayName(who)}` : displayName(who)}
-                    </b>
-                    {(m.count ?? 1) > 1 && (
-                      <span className="flex-none rounded-md bg-sand px-1.5 text-[11px] font-semibold text-muted" aria-label={`${m.count} emails in this conversation`}>
-                        {m.count}
-                      </span>
-                    )}
-                    {m.attachments && <Clip size={13} className="flex-none text-muted" />}
-                    <span className="flex-none text-xs text-muted">{shortDate(m.date)}</span>
-                  </div>
-                  <span className={`truncate text-[13px] text-ink ${m.seen ? "font-normal" : "font-semibold"}`}>{m.subject}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="flex-1 truncate text-[12.5px] text-muted">{m.snippet}</span>
-                    <button
-                      aria-label={m.flagged ? "Unstar" : "Star"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        act(m.flagged ? "unflag" : "flag", [m.uid]);
-                      }}
-                      className={`flex-none ${m.flagged ? "text-[#C7913D]" : "text-line-strong opacity-0 group-hover:opacity-100"}`}
-                    >
-                      <Star size={15} filled={m.flagged} />
-                    </button>
-                  </div>
-                </div>
+          <div className="scroll-thin flex-1 overflow-y-auto">
+            {loading && rows.length === 0 && <ListSkeleton />}
+            {listError && (
+              <div className="m-4 rounded-xl border border-orange-line bg-orange-soft p-3 text-[13px] text-orange-text">
+                {listError}{" "}
+                <button className="ml-1 font-semibold underline" onClick={() => loadList()}>
+                  Try again
+                </button>
               </div>
-            );
-          })}
-          {pages > 1 && (
-            <div className="flex items-center justify-between border-t border-line-faint px-4 py-3 text-[12.5px] text-muted">
-              <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="rounded-lg border border-line-strong px-3 py-1.5 font-medium text-ink disabled:opacity-40">
-                Newer
-              </button>
-              <span>
-                Page {page} of {pages}
-              </span>
-              <button disabled={page >= pages} onClick={() => setPage(page + 1)} className="rounded-lg border border-line-strong px-3 py-1.5 font-medium text-ink disabled:opacity-40">
-                Older
-              </button>
-            </div>
-          )}
-        </div>
-      </section>
+            )}
+            {!loading && !listError && rows.length === 0 && (
+              <div className="flex flex-col items-center gap-1 px-6 py-16 text-center">
+                <b className="font-head text-[15px]">{activeQuery ? "No emails match your search" : unreadOnly ? "You're all caught up" : "Nothing here yet"}</b>
+                <span className="text-[13px] text-muted">{activeQuery ? "Try other words, a name or an email address." : "New emails will show up here."}</span>
+              </div>
+            )}
+            {groups.map((g) => {
+              const closed = closedGroups.has(g.label);
+              return (
+                <div key={g.label}>
+                  <button
+                    onClick={() =>
+                      setClosedGroups((s) => {
+                        const n = new Set(s);
+                        if (n.has(g.label)) n.delete(g.label);
+                        else n.add(g.label);
+                        return n;
+                      })
+                    }
+                    aria-expanded={!closed}
+                    className="flex w-full items-center gap-1.5 border-t border-line-faint px-3.5 pb-1.5 pt-2.5 text-left text-[13px] font-semibold text-ink-soft"
+                  >
+                    {closed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    {g.label}
+                  </button>
+                  {!closed &&
+                    g.rows.map((m) => {
+                      const who = role === "sent" || role === "drafts" ? m.to[0] : m.from[0];
+                      const [bg, fg] = avatarColors(who?.address || "?");
+                      const isSel = m.uid === selected || (m.uids ?? []).includes(selected ?? -1);
+                      const count = m.count ?? 1;
+                      const open = expanded.has(m.uid);
+                      return (
+                        <div key={m.uid} className="border-t border-line-faint">
+                          <div
+                            className={`group flex cursor-pointer gap-2 py-[11px] pl-1.5 pr-3.5 ${
+                              isSel ? "bg-[#FBF3EE] shadow-[inset_3px_0_0_#E8693A]" : !m.seen ? "bg-white shadow-[inset_3px_0_0_#E8693A] hover:bg-paper" : "bg-white hover:bg-paper"
+                            }`}
+                            onClick={() => (role === "drafts" ? openDraft(m.uid) : open_(m.uid))}
+                          >
+                            {count > 1 ? (
+                              <button
+                                aria-label={open ? "Collapse conversation" : "Expand conversation"}
+                                aria-expanded={open}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpanded((s) => {
+                                    const n = new Set(s);
+                                    if (n.has(m.uid)) n.delete(m.uid);
+                                    else n.add(m.uid);
+                                    return n;
+                                  });
+                                }}
+                                className="flex h-9 w-[18px] flex-none items-center justify-center text-muted hover:text-ink"
+                              >
+                                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              </button>
+                            ) : (
+                              <span className="w-[18px] flex-none" />
+                            )}
+                            <div className="relative flex-none">
+                              <div
+                                className="flex h-9 w-9 items-center justify-center rounded-full font-head text-[12.5px] font-semibold group-hover:hidden"
+                                style={{ background: bg, color: fg, display: checked.has(m.uid) ? "none" : undefined }}
+                              >
+                                {initials(who)}
+                              </div>
+                              <label className={`h-9 w-9 items-center justify-center ${checked.has(m.uid) ? "flex" : "hidden group-hover:flex"}`} onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  aria-label="Select"
+                                  checked={checked.has(m.uid)}
+                                  onChange={() => {
+                                    const n = new Set(checked);
+                                    if (n.has(m.uid)) n.delete(m.uid);
+                                    else n.add(m.uid);
+                                    setChecked(n);
+                                  }}
+                                  className="h-4 w-4 accent-[#E8693A]"
+                                />
+                              </label>
+                            </div>
+                            <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                              <div className="flex items-baseline gap-2">
+                                <b className={`flex-1 truncate text-sm text-ink ${m.seen ? "font-normal" : "font-semibold"}`}>
+                                  {role === "sent" || role === "drafts" ? `To: ${displayName(who)}` : displayName(who)}
+                                </b>
+                                {count > 1 && (
+                                  <span className="flex-none rounded-[5px] bg-sand px-1.5 text-[11px] font-bold leading-[17px] text-muted" aria-label={`${count} emails in this conversation`}>
+                                    {count}
+                                  </span>
+                                )}
+                                {m.attachments && <Clip size={13} className="flex-none text-muted" />}
+                              </div>
+                              <div className="flex items-baseline gap-2">
+                                <span className={`flex-1 truncate text-[13.5px] ${m.seen ? "font-normal text-ink" : "font-semibold text-orange-text"}`}>{m.subject}</span>
+                                <span className="flex-none text-[12.5px] text-muted">{shortDate(m.date)}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="flex-1 truncate text-[13px] text-muted">{m.snippet}</span>
+                                <button
+                                  aria-label={m.flagged ? "Unstar" : "Star"}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    act(m.flagged ? "unflag" : "flag", [m.uid]);
+                                  }}
+                                  className={`flex-none ${m.flagged ? "text-[#C7913D]" : "text-line-strong opacity-0 group-hover:opacity-100"}`}
+                                >
+                                  <Star size={15} filled={m.flagged} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          {open &&
+                            (m.members ?? []).map((x) => (
+                              <button
+                                key={x.uid}
+                                onClick={() => open_(x.uid)}
+                                className={`flex w-full items-baseline gap-2 border-t border-line-faint py-2 pl-[70px] pr-3.5 text-left text-[13px] hover:bg-paper ${x.uid === selected ? "bg-[#FBF3EE]" : ""}`}
+                              >
+                                <span className={`w-[120px] flex-none truncate ${x.seen ? "" : "font-semibold"}`}>{displayName(x.from[0])}</span>
+                                <span className="flex-1 truncate text-muted">{x.snippet}</span>
+                                <span className="flex-none text-xs text-muted">{shortDate(x.date)}</span>
+                              </button>
+                            ))}
+                        </div>
+                      );
+                    })}
+                </div>
+              );
+            })}
+            {pages > 1 && (
+              <div className="flex items-center justify-between border-t border-line-faint px-4 py-3 text-[12.5px] text-muted">
+                <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="rounded-lg border border-line-strong px-3 py-1.5 font-medium text-ink disabled:opacity-40">
+                  Newer
+                </button>
+                <span>
+                  Page {page} of {pages}
+                </span>
+                <button disabled={page >= pages} onClick={() => setPage(page + 1)} className="rounded-lg border border-line-strong px-3 py-1.5 font-medium text-ink disabled:opacity-40">
+                  Older
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
 
-      {/* Reader */}
-      <main className={`min-w-0 flex-1 flex-col bg-bg ${selected ? "flex" : "hidden md:flex"}`}>
-        <Reader
-          message={message}
-          thread={thread}
-          loading={messageLoading}
-          role={role}
-          folders={folders}
-          onBack={() => {
-            setSelected(null);
-            setMessage(null);
-          }}
-          onAction={(a, target) => message && act(a, [message.uid], target)}
-          onCompose={(d) => setDraft(d)}
-          onSent={() => {
-            flash("Sent");
-            loadFolders();
-          }}
-          onError={(t) => flash(t, "error")}
-        />
-      </main>
+        {/* Reading pane */}
+        <main className={`min-w-0 flex-1 flex-col ${selected ? "flex" : "hidden md:flex"}`}>
+          <Reader
+            message={message}
+            thread={thread}
+            loading={messageLoading}
+            role={role}
+            folders={folders}
+            onBack={() => {
+              setSelected(null);
+              setMessage(null);
+            }}
+            onAction={(a, target) => message && act(a, [message.uid], target)}
+            onCompose={(d) => setDraft(d)}
+            onSent={() => {
+              flash("Sent");
+              loadFolders();
+            }}
+            onError={(t) => flash(t, "error")}
+          />
+        </main>
+      </div>
 
       {draft && (
         <Composer
@@ -524,15 +744,18 @@ export default function MailApp({ email, build }: { email: string; build: string
       {toast && (
         <div
           role="status"
-          className={`fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl px-4 py-2.5 text-[13.5px] font-medium shadow-lg ${
-            toast.tone === "ok" ? "bg-ink text-white" : "bg-orange-text text-white"
-          }`}
+          className={`fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl px-4 py-2.5 text-[13.5px] font-medium shadow-lg ${toast.tone === "ok" ? "bg-ink text-white" : "bg-orange-text text-white"}`}
         >
           {toast.text}
         </div>
       )}
-    </div>
+    </Shell>
   );
+
+  function latestFromOthers(): FullMessage {
+    const msgs = thread.length ? thread : message ? [message] : [];
+    return msgs.find((x) => !x.from.some((a) => a.address.toLowerCase() === email.toLowerCase())) || (message as FullMessage);
+  }
 
   async function openDraft(uid: number) {
     try {
@@ -551,9 +774,18 @@ export default function MailApp({ email, build }: { email: string; build: string
   }
 }
 
-function BulkBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function Sep() {
+  return <span className="mx-1 h-[22px] w-px flex-none bg-line-strong" />;
+}
+
+function RibbonBtn({ children, onClick, icon, disabled }: { children: React.ReactNode; onClick: () => void; icon: React.ReactNode; disabled?: boolean }) {
   return (
-    <button onClick={onClick} className="h-7 rounded-lg border border-line-strong bg-white px-2.5 text-xs font-medium text-ink hover:bg-bg">
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="flex h-[34px] flex-none items-center gap-1.5 rounded-lg px-2 text-[13.5px] text-ink hover:bg-bg disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+    >
+      {icon}
       {children}
     </button>
   );

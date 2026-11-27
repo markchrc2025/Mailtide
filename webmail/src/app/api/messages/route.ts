@@ -74,8 +74,14 @@ export const GET = authed(async (user, req: Request) => {
       });
     }
     rows.sort((a, b) => b.uid - a.uid);
-    const list = grouped ? groupRows(rows) : rows.map((r) => ({ ...r, uids: [r.uid], count: 1 }));
-    return { total, exists, messages: list.map(({ messageId: _m, inReplyTo: _r, ...r }) => r) };
+    const list = grouped ? groupRows(rows) : rows.map((r) => ({ ...r, uids: [r.uid], count: 1, members: [r] }));
+    // Members are the emails inside a conversation row, newest first, for the expand arrow.
+    const slim = (m: (typeof rows)[number]) => ({ uid: m.uid, from: m.from, date: m.date, seen: m.seen, snippet: m.snippet, subject: m.subject });
+    return {
+      total,
+      exists,
+      messages: list.map(({ messageId: _m, inReplyTo: _r, members, ...r }) => ({ ...r, members: members.length > 1 ? members.map(slim) : undefined })),
+    };
   });
 
   return json({ folder, page, pageSize: PAGE, ...result });

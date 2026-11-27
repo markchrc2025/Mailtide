@@ -15,6 +15,7 @@ export type MessageRow = {
   /** Every email in this conversation row (newest first) and how many. */
   uids?: number[];
   count?: number;
+  members?: { uid: number; from: Address[]; date: string; seen: boolean; snippet: string; subject: string }[];
 };
 export type Attachment = { index: number; filename: string; contentType: string; size: number; url: string };
 export type FullMessage = {
@@ -39,8 +40,10 @@ export type FullMessage = {
 export type Thread = { subject: string; opened: { uid: number; folder: string }; messages: FullMessage[] };
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number) {
+  status: number;
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
   }
 }
 
@@ -130,4 +133,20 @@ export function quoteText(m: FullMessage): string {
 export function prefixSubject(prefix: "Re" | "Fwd", s: string): string {
   const re = new RegExp(`^${prefix}:`, "i");
   return re.test(s.trim()) ? s : `${prefix}: ${s}`;
+}
+
+/** Outlook-style date groups for the message list. */
+export function dateGroup(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "Older";
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  const dow = (now.getDay() + 6) % 7; // Monday = 0
+  if (diff <= dow) return "This week";
+  if (diff <= dow + 7) return "Last week";
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) return "Earlier this month";
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleString("en", { month: "long" });
+  return "Older";
 }
