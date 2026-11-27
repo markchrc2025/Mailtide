@@ -34,6 +34,12 @@ const sunday = (d: Date) => addDays(startOfDay(d), -d.getDay());
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 const timeLabel = (d: Date) => d.toLocaleTimeString("en", { hour: "numeric", minute: "2-digit" });
+function rangeTitle(a: Date, b: Date) {
+  const m = (d: Date) => d.toLocaleString("en", { month: "long" });
+  if (a.getFullYear() !== b.getFullYear()) return `${m(a)} ${a.getDate()}, ${a.getFullYear()} to ${m(b)} ${b.getDate()}, ${b.getFullYear()}`;
+  if (a.getMonth() !== b.getMonth()) return `${m(a)} ${a.getDate()} to ${m(b)} ${b.getDate()}, ${b.getFullYear()}`;
+  return `${m(a)} ${a.getDate()} to ${b.getDate()}, ${b.getFullYear()}`;
+}
 const hourLabel = (h: number) => (h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`);
 
 function rangeFor(view: View, anchor: Date): { from: Date; days: Date[] } {
@@ -86,7 +92,7 @@ function layoutDay(evs: Ev[], day: Date) {
 }
 
 export default function CalendarApp({ build }: { build: string }) {
-  const [view, setView] = useState<View>("workweek");
+  const [view, setView] = useState<View>(() => ([0, 6].includes(new Date().getDay()) ? "week" : "workweek"));
   const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
   const [miniMonth, setMiniMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [calendars, setCalendars] = useState<Cal[]>([]);
@@ -157,11 +163,7 @@ export default function CalendarApp({ build }: { build: string }) {
       ? anchor.toLocaleString("en", { month: "long", year: "numeric" })
       : view === "day"
         ? anchor.toLocaleDateString("en", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-        : `${days[0].toLocaleDateString("en", { month: "long", day: "numeric" })} to ${days[days.length - 1].toLocaleDateString("en", {
-            month: days[0].getMonth() === days[days.length - 1].getMonth() ? undefined : "long",
-            day: "numeric",
-            year: "numeric",
-          })}`;
+        : rangeTitle(days[0], days[days.length - 1]);
 
   async function remove(ev: Ev) {
     if (!window.confirm(ev.recurring ? `Delete every event in the series "${ev.title}"?` : `Delete "${ev.title}"?`)) return;
