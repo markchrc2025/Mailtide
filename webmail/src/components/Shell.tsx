@@ -238,7 +238,7 @@ export function TopBar({
               </span>
               <span className="flex items-center gap-2">
                 <span className="flex-1 text-sm text-muted" title="Shared mailboxes you can open appear in your folder list.">
-                  Open another mailbox <span className="text-xs">(coming with shared mailboxes)</span>
+                  Open another mailbox <span className="text-xs">(shared mailboxes are in your folder list)</span>
                 </span>
                 <span className="text-muted" aria-hidden="true">
                   <More size={16} />

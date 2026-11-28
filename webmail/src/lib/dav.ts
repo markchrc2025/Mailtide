@@ -239,11 +239,14 @@ export type NewEvent = {
   category?: string;
 };
 
-/** Builds the iCalendar text for a new event. With method REQUEST it is an invitation. */
+/**
+ * Builds the iCalendar text for a new event. With method REQUEST it is an invitation.
+ * Attendees carry no SCHEDULE-AGENT, so the server (SOGo) sends the invitation, updates and cancellation.
+ */
 export function buildEvent(e: NewEvent, organizer: { email: string; name?: string }, uid: string, method?: "REQUEST") {
   const dt = (iso: string, key: string) => (e.allDay ? `${key};VALUE=DATE:${iso.replace(/-/g, "").slice(0, 8)}` : `${key}:${utc(new Date(iso))}`);
   const att = (addr: string, optional: boolean) =>
-    `ATTENDEE;ROLE=${optional ? "OPT-PARTICIPANT" : "REQ-PARTICIPANT"};PARTSTAT=NEEDS-ACTION;RSVP=TRUE;SCHEDULE-AGENT=CLIENT:mailto:${addr}`;
+    `ATTENDEE;ROLE=${optional ? "OPT-PARTICIPANT" : "REQ-PARTICIPANT"};PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${addr}`;
   const attendees = [...(e.required || []).map((a) => att(a, false)), ...(e.optional || []).map((a) => att(a, true))];
   const desc = [e.description || "", e.meetingLink ? `Join: ${e.meetingLink}` : ""].filter(Boolean).join("\n\n");
   const rule = { daily: "FREQ=DAILY", weekly: "FREQ=WEEKLY", monthly: "FREQ=MONTHLY", yearly: "FREQ=YEARLY" } as const;

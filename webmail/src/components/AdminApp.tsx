@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client";
+import { askConfirm } from "./Dialogs";
 import { TopBar } from "./Shell";
 import { AddPerson, At, Card, Close, Download, Globe, Home, Log, Mail, People, Plus, Reply, Shield, Trash } from "./Icons";
 
@@ -27,7 +28,9 @@ const ROLE_HELP: Record<string, string> = {
 
 const btn = "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line-strong bg-white px-3 text-[13.5px] font-semibold text-ink no-underline hover:bg-bg disabled:opacity-50";
 const btnP = "inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg bg-orange px-3.5 text-[13.5px] font-semibold text-white no-underline hover:bg-orange-press disabled:opacity-50";
-const inp = "h-[38px] w-full rounded-lg border border-line-strong bg-white px-3 text-sm outline-none focus:border-orange";
+// inpBase has no width, for fields that sit beside others in a row (MTD-102).
+const inpBase = "h-[38px] rounded-lg border border-line-strong bg-white px-3 text-sm outline-none focus:border-orange";
+const inp = `${inpBase} w-full`;
 const lab = "flex flex-col gap-1.5 text-[13.5px] font-semibold";
 const th = "whitespace-nowrap border-b border-line px-3 py-2.5 text-left text-xs font-semibold text-muted";
 const td = "border-b border-line-faint px-3 py-2.5 align-middle text-[13.5px]";
@@ -257,7 +260,7 @@ function HomePage({ ov }: { ov: Ov }) {
           <CardBox title="Mailboxes" icon={<Mail size={18} />} action={<Link href="/admin/mailboxes" className={btn}>Manage</Link>}>
             {row("Mailboxes", d.mailboxes)}
             {row("Shared mailboxes", d.shared)}
-            {row("Storage used", gb(d.storage))}
+            {row("Storage allocated", gb(d.storage))}
           </CardBox>
           <CardBox title="Shared mailboxes" icon={<People size={18} />} action={<Link href="/admin/shared" className={btn}>Manage</Link>}>
             <p className="m-0 text-sm">{d.shared ? `${d.shared} shared ${d.shared === 1 ? "mailbox" : "mailboxes"}.` : "No shared mailboxes yet."}</p>
@@ -519,9 +522,9 @@ function InviteModal({ domains, onClose, onDone }: { domains: string[]; onClose:
         </label>
         {makeBox && (
           <div className="flex items-center gap-1.5">
-            <input aria-label="Mailbox name" placeholder="first.last" value={local} onChange={(e) => setLocal(e.target.value)} className={`${inp} flex-1`} />
+            <input aria-label="Mailbox name" placeholder="first.last" value={local} onChange={(e) => setLocal(e.target.value)} className={`${inpBase} min-w-0 flex-1`} />
             <span className="text-muted">@</span>
-            <select aria-label="Domain" value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inp} w-[230px]`}>
+            <select aria-label="Domain" value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inpBase} w-[230px] max-w-[55%] shrink-0`}>
               {domains.map((d) => (
                 <option key={d}>{d}</option>
               ))}
@@ -646,9 +649,9 @@ function NewMailbox({ domains, onClose, onDone }: { domains: string[]; onClose: 
       <label className={lab}>
         Address
         <span className="flex items-center gap-1.5">
-          <input placeholder="first.last" value={local} onChange={(e) => setLocal(e.target.value)} className={`${inp} flex-1`} />
+          <input aria-label="Mailbox name" placeholder="first.last" value={local} onChange={(e) => setLocal(e.target.value)} className={`${inpBase} min-w-0 flex-1`} />
           <span className="font-normal text-muted">@</span>
-          <select value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inp} w-[230px]`}>
+          <select aria-label="Domain" value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inpBase} w-[230px] max-w-[55%] shrink-0`}>
             {domains.map((d) => (
               <option key={d}>{d}</option>
             ))}
@@ -684,7 +687,7 @@ function EditMailbox({ box, onClose, onDone }: { box: Box; onClose: () => void; 
     }
   }
   async function remove() {
-    if (!window.confirm(`Delete ${box.email} and all of its mail? This cannot be undone.`)) return;
+    if (!(await askConfirm({ title: `Delete ${box.email}?`, message: "The mailbox and all of its mail are deleted. This cannot be undone.", confirmLabel: "Delete mailbox", danger: true }))) return;
     try {
       await api(`/api/admin/mailboxes?email=${encodeURIComponent(box.email)}`, { method: "DELETE" });
       onDone("Mailbox deleted");
@@ -735,7 +738,7 @@ function SharedPage({ flash }: { flash: (t: string) => void }) {
   const people = (mb.data?.mailboxes || []).filter((b) => !b.shared).map((b) => b.email);
   const access = (a: string) => (a === "full" ? "Full" : a === "sendas" ? "Send as" : "Read");
   async function delAlias(a: Alias) {
-    if (!window.confirm(`Delete the alias ${a.address}?`)) return;
+    if (!(await askConfirm({ title: `Delete the alias ${a.address}?`, confirmLabel: "Delete", danger: true }))) return;
     try {
       await api(`/api/admin/aliases?id=${a.id}`, { method: "DELETE" });
       flash("Alias deleted");
@@ -912,9 +915,9 @@ function SharedModal({ existing, domains, people, onClose, onDone }: { existing:
           <label className={lab}>
             Address
             <span className="flex items-center gap-1.5">
-              <input placeholder="support" value={local} onChange={(e) => setLocal(e.target.value)} className={`${inp} flex-1`} />
+              <input aria-label="Address name" placeholder="support" value={local} onChange={(e) => setLocal(e.target.value)} className={`${inpBase} min-w-0 flex-1`} />
               <span className="font-normal text-muted">@</span>
-              <select value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inp} w-[170px]`}>
+              <select aria-label="Domain" value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inpBase} w-[230px] max-w-[55%] shrink-0`}>
                 {domains.map((d) => (
                   <option key={d}>{d}</option>
                 ))}
@@ -1013,7 +1016,7 @@ function AliasModal({ domains, people, onClose, onDone }: { domains: string[]; p
         <span className="flex items-center gap-1.5">
           <input autoFocus placeholder="info" value={local} onChange={(e) => setLocal(e.target.value)} className={`${inp} flex-1`} />
           <span className="font-normal text-muted">@</span>
-          <select value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inp} w-[230px]`}>
+          <select aria-label="Domain" value={domain} onChange={(e) => setDomain(e.target.value)} className={`${inpBase} w-[230px] max-w-[55%] shrink-0`}>
             {domains.map((d) => (
               <option key={d}>{d}</option>
             ))}
@@ -1346,7 +1349,7 @@ function BillingPage({ ov }: { ov: { mailboxes: number; storage: number; domains
         </CardBox>
         <CardBox title="Usage" icon={<Mail size={18} />}>
           {row("Mailboxes", ov?.mailboxes ?? "...")}
-          {row("Storage used", ov ? gb(ov.storage) : "...")}
+          {row("Storage allocated", ov ? gb(ov.storage) : "...")}
           {row("Domains", ov?.domains.length ?? "...")}
         </CardBox>
       </div>

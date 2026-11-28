@@ -24,7 +24,7 @@ export function sessionSecret(): string {
 }
 
 /** The build shown in the app and in /api/health (raise it with each release). */
-export const BUILD = "0.5.1";
+export const BUILD = "0.5.2";
 
 export function isAdmin(email: string): boolean {
   return config.adminEmails.includes(email.toLowerCase());

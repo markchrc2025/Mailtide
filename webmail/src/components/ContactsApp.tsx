@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, avatarColors } from "@/lib/client";
+import { askConfirm, askText } from "./Dialogs";
 import { Shell } from "./Shell";
 import { AddPerson, ChevronDown, Close, Download, Mail, Menu, Pen, People, Star, Tag, Trash, Upload } from "./Icons";
 
@@ -120,7 +121,7 @@ export default function ContactsApp({ build }: { build: string }) {
   }
 
   async function remove(c: Contact) {
-    if (!window.confirm(`Delete ${label(c)}? You can restore it from Deleted until you leave this page.`)) return;
+    if (!(await askConfirm({ title: `Delete ${label(c)}?`, message: "You can restore it from Deleted until you leave this page.", confirmLabel: "Delete", danger: true }))) return;
     try {
       await api(`/api/contacts?href=${encodeURIComponent(c.href)}`, { method: "DELETE" });
       setDeleted((d) => [c, ...d]);
@@ -153,7 +154,7 @@ export default function ContactsApp({ build }: { build: string }) {
   }
 
   async function addCategory(c: Contact) {
-    const name = window.prompt("Category name (for example Clients or Suppliers)");
+    const name = await askText({ title: "Add a category", message: "For example Clients or Suppliers.", placeholder: "Category name", confirmLabel: "Add" });
     if (!name?.trim()) return;
     try {
       const f = toForm(c);

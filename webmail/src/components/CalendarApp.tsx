@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
+import { askConfirm } from "./Dialogs";
 import { Shell } from "./Shell";
 import { Calendar as CalIcon, ChevronDown, ChevronRight, Close, External, Pen, Pin, Plus, Trash } from "./Icons";
 
@@ -166,7 +167,7 @@ export default function CalendarApp({ build }: { build: string }) {
         : rangeTitle(days[0], days[days.length - 1]);
 
   async function remove(ev: Ev) {
-    if (!window.confirm(ev.recurring ? `Delete every event in the series "${ev.title}"?` : `Delete "${ev.title}"?`)) return;
+    if (!(await askConfirm({ title: ev.recurring ? `Delete every event in the series "${ev.title}"?` : `Delete "${ev.title}"?`, message: ev.attendees?.length ? "The people you invited are told it is cancelled." : undefined, confirmLabel: "Delete", danger: true }))) return;
     try {
       await api(`/api/calendar/events?href=${encodeURIComponent(ev.href)}`, { method: "DELETE" });
       setPicked(null);

@@ -22,7 +22,8 @@ test("buildEvent writes a valid timed event with attendees, reminder and repeat"
   assert.equal(c.getFirstPropertyValue("transp"), "TRANSPARENT");
   assert.equal(c.getFirstPropertyValue("class"), "PRIVATE");
   assert.match(text, /TRIGGER:-PT15M/);
-  assert.match(text.replace(/\r\n /g, ""), /SCHEDULE-AGENT=CLIENT/);
+  // The server is the scheduling agent (MTD-103): no SCHEDULE-AGENT=CLIENT, or attendees get two invitations.
+  assert.doesNotMatch(text.replace(/\r\n /g, ""), /SCHEDULE-AGENT/);
   assert.ok(text.split("\r\n").every((l) => Buffer.byteLength(l) <= 75), "lines are folded");
 });
 

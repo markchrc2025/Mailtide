@@ -365,8 +365,10 @@ export default function MailApp({ email, build }: { email: string; build: string
   }, [inboxUnseen]);
 
   const nowMs = Date.now();
+  const tracksReplies = !!sharedBox && role !== "sent" && role !== "drafts";
   const teamStatus = (key?: string, answered?: boolean): { text: string; tone: "open" | "done" | "busy" } | null => {
-    if (!sharedBox || !key) return null;
+    // Reply status is about mail people sent to the team, not the team's own Sent or Drafts (MTD-104).
+    if (!sharedBox || !key || !tracksReplies) return null;
     const busy = team.replying.filter((r) => r.thread === key);
     if (busy.length) return { text: `${busy.map((b) => (b.member === email ? "You" : b.name)).join(", ")} ${busy.length === 1 && busy[0].member !== email ? "is" : "are"} replying now`, tone: "busy" };
     const done = team.replied.find((r) => r.thread === key);
@@ -377,7 +379,7 @@ export default function MailApp({ email, build }: { email: string; build: string
     if (answered) return { text: "Replied", tone: "done" };
     return { text: "Not replied yet", tone: "open" };
   };
-  const visibleRows = notReplied ? rows.filter((r) => teamStatus(r.key, r.answered)?.tone === "open") : rows;
+  const visibleRows = notReplied && tracksReplies ? rows.filter((r) => teamStatus(r.key, r.answered)?.tone === "open") : rows;
   const othersReplying = sharedBox && selectedKey ? team.replying.filter((r) => r.thread === selectedKey && r.member !== email) : [];
 
   const targets = checked.size ? [...checked] : selected ? [selected] : [];
@@ -634,7 +636,7 @@ export default function MailApp({ email, build }: { email: string; build: string
                   [
                     ["All", false, false],
                     ["Unread", true, false],
-                    ...(sharedBox ? [["Not replied", false, true]] : []),
+                    ...(tracksReplies ? [["Not replied", false, true]] : []),
                   ] as [string, boolean, boolean][]
                 ).map(([label, val, nr]) => {
                   const on = nr ? notReplied : !notReplied && unreadOnly === val;

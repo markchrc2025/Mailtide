@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, fileSize, splitAddresses, type Attachment } from "@/lib/client";
+import { askConfirm } from "./Dialogs";
 import { Clip, Close, Send } from "./Icons";
 
 export type Draft = {
@@ -58,7 +59,14 @@ export default function Composer({
   const body = useRef<HTMLTextAreaElement>(null);
   const toRef = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const dirty = to || subject || text.trim() !== (initial.text ?? "").trim() || files.length;
+  // Only what the person changed counts: a composer opened with a recipient or a quoted reply is not dirty yet.
+  const dirty =
+    to.trim() !== (initial.to ?? "").trim() ||
+    cc.trim() !== (initial.cc ?? "").trim() ||
+    bcc.trim() !== (initial.bcc ?? "").trim() ||
+    subject.trim() !== (initial.subject ?? "").trim() ||
+    text.trim() !== (initial.text ?? "").trim() ||
+    files.length > (initial.forwardAttachments?.length ?? 0);
 
   useEffect(() => {
     if (initial.to) {
@@ -108,7 +116,7 @@ export default function Composer({
       setError("Add at least one recipient.");
       return;
     }
-    if (mode === "send" && !subject.trim() && !window.confirm("Send without a subject?")) return;
+    if (mode === "send" && !subject.trim() && !(await askConfirm({ title: "Send without a subject?", confirmLabel: "Send anyway" }))) return;
     setBusy(mode);
     try {
       const own = !from || from === fromOptions[0]?.address;
@@ -137,8 +145,8 @@ export default function Composer({
     }
   }
 
-  function close() {
-    if (dirty && !window.confirm("Discard this email?")) return;
+  async function close() {
+    if (dirty && !(await askConfirm({ title: "Discard this email?", message: "What you wrote will be lost.", confirmLabel: "Discard", danger: true }))) return;
     onClose();
   }
 

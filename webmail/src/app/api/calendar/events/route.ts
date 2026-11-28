@@ -1,9 +1,7 @@
-import nodemailer from "nodemailer";
 import { z } from "zod";
 import { authed, fail, json } from "@/lib/http";
-import { buildEvent, createEvent, deleteEvent, listCalendars } from "@/lib/dav";
+import { createEvent, deleteEvent, listCalendars } from "@/lib/dav";
 import { davFail } from "@/lib/davhttp";
-import { config } from "@/lib/config";
 
 const Email = z.string().trim().email().max(254);
 const Body = z.object({
@@ -37,29 +35,9 @@ export const POST = authed(async (user, req: Request) => {
     const cal = b.calendar || (await listCalendars(user))[0]?.href;
     if (!cal) return fail("No calendar was found for this mailbox.", 404);
     const saved = await createEvent(user, { ...b, calendar: cal });
-    // Invitations go out from the organizer's own mailbox, like any email they send.
-    const invitees = [...b.required, ...b.optional].filter((a) => a.toLowerCase() !== user.email.toLowerCase());
-    let invited = 0;
-    if (invitees.length) {
-      const transport = nodemailer.createTransport({
-        host: config.smtpHost,
-        port: config.smtpPort,
-        secure: config.smtpPort === 465,
-        requireTLS: config.smtpPort !== 465,
-        auth: { user: user.email, pass: user.password },
-      });
-      const when = b.allDay ? b.start.slice(0, 10) : s.toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "full", timeStyle: "short" });
-      await transport.sendMail({
-        from: user.name ? { name: user.name, address: user.email } : user.email,
-        to: b.required.filter((a) => invitees.includes(a)),
-        cc: b.optional.filter((a) => invitees.includes(a)),
-        subject: `Invitation: ${b.title || "(no title)"}`,
-        text: [`${b.title || "(no title)"}`, `When: ${when}`, b.location ? `Where: ${b.location}` : "", b.meetingLink ? `Join: ${b.meetingLink}` : "", "", b.description || ""].filter((x) => x !== undefined).join("\n"),
-        icalEvent: { method: "REQUEST", content: buildEvent({ ...b, calendar: cal }, { email: user.email, name: user.name }, saved.uid, "REQUEST") },
-        headers: { "X-Mailer": "MailTide by Sentire" },
-      });
-      invited = invitees.length;
-    }
+    // The mail server (SOGo) is the scheduling agent: on this save it emails the invitation to every
+    // attendee, and later the update or cancellation. MailTide sends nothing itself, so nobody gets two (MTD-103).
+    const invited = [...b.required, ...b.optional].filter((a) => a.toLowerCase() !== user.email.toLowerCase()).length;
     return json({ ok: true, ...saved, invited });
   } catch (err) {
     return davFail(err);
