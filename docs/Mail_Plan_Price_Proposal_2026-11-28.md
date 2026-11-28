@@ -54,3 +54,14 @@ Two billing rules I recommend with these prices:
 2. **Business price.** Recommended: ₱199 per mailbox per month, ₱1,990 per year, or leave this tier out at launch and sell one plan.
 3. **Monthly minimum.** Recommended: ₱297 per month minimum on monthly billing; no minimum on yearly.
 4. **Bundle.** Recommended: decide later, with Payroll's pricing, whether Payroll customers get Mail Starter mailboxes included.
+
+## Decided by the owner (28 Nov 2026)
+
+| Decision | Outcome |
+|---|---|
+| Starter price | ₱99 per mailbox per month, ₱990 per year. Accepted. |
+| Business tier | Not at launch. MailTide launches with one paid plan; Business (₱199, ₱1,990 per year) is added when shared mailboxes have paying users. |
+| Monthly minimum | ₱297 per month on monthly billing; no minimum on yearly. Accepted. |
+| Bundle with Payroll | Not decided; to be settled with Payroll's pricing. |
+
+Consequence to confirm when the catalog is set up: with one paid plan, shared mailboxes and the audit log are part of Starter until the Business tier exists. Storage per mailbox (10 GB) is still unconfirmed against the mail server's free disk.

@@ -42,3 +42,14 @@ P3A was 13 tasks written as if accounts and billing had to be built. With Cloud 
 2. **Free plan (Gap 2).** Recommended: MailTide treats "no Mail subscription" as the free limits. No change to Cloud's billing, and "no free tier" stays true for the paid apps.
 3. **Mailbox access (Gap 3).** Recommended: a Dovecot master user held only by MailTide, with every use audited. One credential to protect, nothing for users to set up.
 4. **Order of work.** Recommended: finish Sentire Cloud's staging UAT and go to production first; MailTide's P3A integration follows. Until then MailTide keeps mailbox-password sign-in and its local roles.
+
+## Decided by the owner (28 Nov 2026)
+
+All four recommendations accepted.
+
+| Decision | Outcome |
+|---|---|
+| Roles | Keep Sentire Cloud's four customer roles (Owner, Admin, Billing, Member). Developer becomes a MailTide permission, not a Cloud role. |
+| Free plan | MailTide treats "no Mail subscription" as the free limits (1 mailbox on the shared domain, 5 GB, 50 sends per hour, 200 per day). No change to Cloud's billing. |
+| Mailbox access after single sign-on | A master credential held only by MailTide, every use audited. Needs a short design before any code (MTD-64). |
+| Order of work | Sentire Cloud finishes staging UAT and goes to production first. MailTide's P3A integration follows; until then MailTide keeps mailbox-password sign-in and its local roles. |
